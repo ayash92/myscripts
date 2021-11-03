@@ -1,0 +1,1867 @@
+From 9f28b000b6fc44e4f2f104a8f6a0389abe45ab43 Mon Sep 17 00:00:00 2001
+From: Vaisakh Murali <mvaisakh@statixos.com>
+Date: Wed, 23 Jun 2021 19:38:49 +0530
+Subject: [PATCH 01/35] kernel: Add GCC Graphite Optimisation support
+
+* GCC Graphite is a framework for high-level memory optimisations using
+  the polyhedral model.
+
+Signed-off-by: Vaisakh Murali <mvaisakh@statixos.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ Makefile     | 4 ++++
+ init/Kconfig | 3 +++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index b6ef86fe5bb5..0f7f320cf630 100644
+--- a/Makefile
++++ b/Makefile
+@@ -688,6 +688,10 @@ LDFLAGS		+= --plugin-opt=O3
+ 
+ endif
+ 
++ifdef CONFIG_GCC_GRAPHITE
++KBUILD_CFLAGS	+= -fgraphite-identity -floop-nest-optimize
++endif
++
+ # The arch Makefile can set ARCH_{CPP,A,C}FLAGS to override the default
+ # values of the respective KBUILD_* variables
+ ARCH_CPPFLAGS :=
+diff --git a/init/Kconfig b/init/Kconfig
+index a7c446ed4bfb..68bf69d85e2a 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1215,6 +1215,9 @@ config CC_OPTIMIZE_FOR_SIZE
+ 
+ endchoice
+ 
++config GCC_GRAPHITE
++	bool "Enable GCC Polyhedral Loop Optimization (Graphite)"
++
+ config SYSCTL
+ 	bool
+ 
+-- 
+2.20.1
+
+
+From 62d53500c9966e8e909cf8c652b953f6ab36916a Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Wed, 11 Mar 2020 09:25:22 -0700
+Subject: [PATCH 02/35] arm64: Make __stack_chk_guard visible
+
+When LTO is used, GCC optimizes out the __stack_chk_guard variable,
+resulting in undefined symbol errors. Fix it by explicitly making
+__stack_chk_guard visible so it doesn't disappear.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/kernel/process.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/kernel/process.c b/arch/arm64/kernel/process.c
+index 63fdcfe1a971..fa89be7871f7 100644
+--- a/arch/arm64/kernel/process.c
++++ b/arch/arm64/kernel/process.c
+@@ -64,7 +64,7 @@
+ 
+ #ifdef CONFIG_CC_STACKPROTECTOR
+ #include <linux/stackprotector.h>
+-unsigned long __stack_chk_guard __ro_after_init;
++__visible unsigned long __stack_chk_guard __ro_after_init;
+ EXPORT_SYMBOL(__stack_chk_guard);
+ #endif
+ 
+-- 
+2.20.1
+
+
+From 721352f06db0477803177dc3f12515fc5bc8dd81 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Wed, 11 Mar 2020 09:29:21 -0700
+Subject: [PATCH 03/35] arm64: Fix section mismatch with LTO caused by
+ ambiguous const
+
+Due to how dt_supported_cpu_ops and acpi_supported_cpu_ops are used,
+they can be placed in a different section by the compiler when LTO is
+used because it thinks that it belongs in another section. To really
+make it clear to GCC that these belong in the __initconst section,
+make the variables themselves const and refactor cpu_get_ops()
+accordingly to make it compile.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/kernel/cpu_ops.c | 23 +++++++++++++----------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/arch/arm64/kernel/cpu_ops.c b/arch/arm64/kernel/cpu_ops.c
+index 29945b98467f..078abb746acf 100644
+--- a/arch/arm64/kernel/cpu_ops.c
++++ b/arch/arm64/kernel/cpu_ops.c
+@@ -31,13 +31,13 @@ extern const struct cpu_operations cpu_psci_ops;
+ 
+ const struct cpu_operations *cpu_ops[NR_CPUS] __ro_after_init;
+ 
+-static const struct cpu_operations *dt_supported_cpu_ops[] __initconst = {
++static const struct cpu_operations *const dt_supported_cpu_ops[] __initconst = {
+ 	&smp_spin_table_ops,
+ 	&cpu_psci_ops,
+ 	NULL,
+ };
+ 
+-static const struct cpu_operations *acpi_supported_cpu_ops[] __initconst = {
++static const struct cpu_operations *const acpi_supported_cpu_ops[] __initconst = {
+ #ifdef CONFIG_ARM64_ACPI_PARKING_PROTOCOL
+ 	&acpi_parking_protocol_ops,
+ #endif
+@@ -47,15 +47,18 @@ static const struct cpu_operations *acpi_supported_cpu_ops[] __initconst = {
+ 
+ static const struct cpu_operations * __init cpu_get_ops(const char *name)
+ {
+-	const struct cpu_operations **ops;
++	int i;
+ 
+-	ops = acpi_disabled ? dt_supported_cpu_ops : acpi_supported_cpu_ops;
+-
+-	while (*ops) {
+-		if (!strcmp(name, (*ops)->name))
+-			return *ops;
+-
+-		ops++;
++	if (acpi_disabled) {
++		for (i = 0; i < ARRAY_SIZE(dt_supported_cpu_ops); i++) {
++			if (!strcmp(name, dt_supported_cpu_ops[i]->name))
++				return dt_supported_cpu_ops[i];
++		}
++	} else {
++		for (i = 0; i < ARRAY_SIZE(acpi_supported_cpu_ops); i++) {
++			if (!strcmp(name, acpi_supported_cpu_ops[i]->name))
++				return acpi_supported_cpu_ops[i];
++		}
+ 	}
+ 
+ 	return NULL;
+-- 
+2.20.1
+
+
+From d00f1b342b8e98259d17a6ce4ba1b9d5792015df Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sat, 26 Dec 2020 19:49:28 -0800
+Subject: [PATCH 04/35] arm64: Disable -fwhole-program for vDSO
+
+The vDSO library is obviously not self-contained, so it doesn't qualify
+for -fwhole-program. Using -fwhole-program on the vDSO library breaks
+it, so disable -fwhole-program to fix it.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/kernel/vdso/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/kernel/vdso/Makefile b/arch/arm64/kernel/vdso/Makefile
+index a2f6350f9770..3be17b22de6d 100644
+--- a/arch/arm64/kernel/vdso/Makefile
++++ b/arch/arm64/kernel/vdso/Makefile
+@@ -20,6 +20,7 @@ ccflags-y += -DDISABLE_BRANCH_PROFILING -ffixed-x18
+ ccflags-y += -nostdlib -Wl,-soname=linux-vdso.so.1 \
+ 		$(call cc-ldoption, -Wl$(comma)--hash-style=sysv)
+ ccflags-y += $(DISABLE_LTO)
++ccflags-y += $(call cc-option, -fno-whole-program)
+ 
+ CFLAGS_vgettimeofday.o = -O3 -mcmodel=tiny
+ 
+-- 
+2.20.1
+
+
+From 02963d332165821b038760881c11806d055f6bb8 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sat, 26 Dec 2020 19:53:09 -0800
+Subject: [PATCH 05/35] Revert "kbuild: thin archives final link close
+ --whole-archives option"
+
+This reverts commit 1328a1ae0e9048ff4b7f6b60c497db7a2799e1b1.
+
+This breaks GCC LTO.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ scripts/link-vmlinux.sh | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/scripts/link-vmlinux.sh b/scripts/link-vmlinux.sh
+index c98e0393978c..27372a9f22fe 100644
+--- a/scripts/link-vmlinux.sh
++++ b/scripts/link-vmlinux.sh
+@@ -105,7 +105,6 @@ modpost_link()
+ 	if [ -n "${CONFIG_THIN_ARCHIVES}" ]; then
+ 		objects="--whole-archive				\
+ 			built-in.o					\
+-			--no-whole-archive				\
+ 			--start-group					\
+ 			${KBUILD_VMLINUX_LIBS}				\
+ 			--end-group"
+@@ -161,7 +160,6 @@ vmlinux_link()
+ 		if [[ -n "${CONFIG_THIN_ARCHIVES}" && -z "${CONFIG_LTO_CLANG}" ]]; then
+ 			objects="--whole-archive 			\
+ 				built-in.o				\
+-				--no-whole-archive			\
+ 				--start-group				\
+ 				${KBUILD_VMLINUX_LIBS}			\
+ 				--end-group				\
+@@ -180,7 +178,6 @@ vmlinux_link()
+ 		if [ -n "${CONFIG_THIN_ARCHIVES}" ]; then
+ 			objects="-Wl,--whole-archive			\
+ 				built-in.o				\
+-				-Wl,--no-whole-archive			\
+ 				-Wl,--start-group			\
+ 				${KBUILD_VMLINUX_LIBS}			\
+ 				-Wl,--end-group				\
+-- 
+2.20.1
+
+
+From fcb1ef4b512ee1cfab5dc0f97c2da7335d996dea Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sat, 26 Dec 2020 19:50:24 -0800
+Subject: [PATCH 06/35] arm64: Only disable LTO for vDSO when Clang is used
+
+GCC LTO works fine on the vDSO.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/kernel/vdso/Makefile | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/kernel/vdso/Makefile b/arch/arm64/kernel/vdso/Makefile
+index 3be17b22de6d..a292dcf8e5df 100644
+--- a/arch/arm64/kernel/vdso/Makefile
++++ b/arch/arm64/kernel/vdso/Makefile
+@@ -24,6 +24,9 @@ ccflags-y += $(call cc-option, -fno-whole-program)
+ 
+ CFLAGS_vgettimeofday.o = -O3 -mcmodel=tiny
+ 
++ifeq ($(cc-name),clang)
++ccflags-y += $(DISABLE_LTO)
++endif
+ CFLAGS_REMOVE_vgettimeofday.o += $(CC_FLAGS_SCS)
+ 
+ # Disable gcov profiling for VDSO code
+-- 
+2.20.1
+
+
+From cfa5dc42bf1df22b2c71d2804d2b7eac84063f95 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Fri, 18 Dec 2020 22:06:25 -0800
+Subject: [PATCH 07/35] scripts: gcc-ld: Fix -m* flag parsing
+
+Any -m* flags need to be prefixed with "-Wl," when passed to the linker.
+This is already done for flags which aren't special-cased, so we can
+just remove the specific -m* flag handling to appease GCC.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ scripts/gcc-ld | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/scripts/gcc-ld b/scripts/gcc-ld
+index 997b818c3962..9ca19db977be 100755
+--- a/scripts/gcc-ld
++++ b/scripts/gcc-ld
+@@ -19,7 +19,6 @@ while [ "$1" != "" ] ; do
+ -rpath-link|--sort-section|--section-start|-Tbss|-Tdata|-Ttext|\
+ --version-script|--dynamic-list|--version-exports-symbol|--wrap|-m)
+ 		A="$1" ; shift ; N="-Wl,$A,$1" ;;
+-	-[m]*) N="$1" ;;
+ 	-*) N="-Wl,$1" ;;
+ 	*)  N="$1" ;;
+ 	esac
+-- 
+2.20.1
+
+
+From 1ea26777787118228ad8f3f09176f07a1b6d6596 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Tue, 10 Mar 2020 21:13:43 -0700
+Subject: [PATCH 08/35] sys_ni: Remove duplicate cond_syscall(sys_madvise)
+ entry
+
+This is already defined. Remove the duplicate from the less-correct
+location.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ kernel/sys_ni.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/kernel/sys_ni.c b/kernel/sys_ni.c
+index b5189762d275..af033b9fda63 100644
+--- a/kernel/sys_ni.c
++++ b/kernel/sys_ni.c
+@@ -163,7 +163,6 @@ cond_syscall(compat_sys_process_vm_writev);
+ cond_syscall(sys_uselib);
+ cond_syscall(sys_fadvise64);
+ cond_syscall(sys_fadvise64_64);
+-cond_syscall(sys_madvise);
+ cond_syscall(sys_setuid);
+ cond_syscall(sys_setregid);
+ cond_syscall(sys_setgid);
+-- 
+2.20.1
+
+
+From 1262b183065cc203022b27fb452e9d457daf4e82 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sat, 26 Dec 2020 19:54:00 -0800
+Subject: [PATCH 09/35] sys_ni: Fix cond_syscall() alias for LTO
+
+When using LTO, the conditional syscall aliases aren't weak, and instead
+override implemented syscalls rather than serve as a fallback for
+missing syscalls. Fix the cond_syscall() alias using an attribute so
+that it gets properly evaluated at link time.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ include/linux/linkage.h | 6 ++----
+ kernel/Makefile         | 3 ---
+ 2 files changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/include/linux/linkage.h b/include/linux/linkage.h
+index f68db9e450eb..553b17662930 100644
+--- a/include/linux/linkage.h
++++ b/include/linux/linkage.h
+@@ -23,10 +23,8 @@
+ #endif
+ 
+ #ifndef cond_syscall
+-#define cond_syscall(x)	asm(				\
+-	".weak " VMLINUX_SYMBOL_STR(x) "\n\t"		\
+-	".set  " VMLINUX_SYMBOL_STR(x) ","		\
+-		 VMLINUX_SYMBOL_STR(sys_ni_syscall))
++#define cond_syscall(x) \
++	long __attribute__((weak, alias("sys_ni_syscall"))) x(void);
+ #endif
+ 
+ #ifndef SYSCALL_ALIAS
+diff --git a/kernel/Makefile b/kernel/Makefile
+index 7651532cbeda..5b27e5a92647 100644
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -32,9 +32,6 @@ KCOV_INSTRUMENT_kcov.o := n
+ KASAN_SANITIZE_kcov.o := n
+ CFLAGS_kcov.o := $(call cc-option, -fno-conserve-stack -fno-stack-protector)
+ 
+-# cond_syscall is currently not LTO compatible
+-CFLAGS_sys_ni.o = $(DISABLE_LTO)
+-
+ # Don't instrument error handlers
+ CFLAGS_cfi.o = $(DISABLE_CFI_CLANG)
+ 
+-- 
+2.20.1
+
+
+From d6fd41a9999e4321daa4beb1bf7b416d3f730066 Mon Sep 17 00:00:00 2001
+From: Andi Kleen <ak@linux.intel.com>
+Date: Tue, 31 Mar 2015 03:45:39 -0700
+Subject: [PATCH 10/35] lto: Add __noreorder and mark initcalls __noreorder
+
+gcc 5 has a new no_reorder attribute that prevents top level
+reordering only for that symbol.
+
+Kernels don't like any reordering of initcalls between files, as several
+initcalls depend on each other. LTO previously needed to use
+-fno-toplevel-reordering to prevent boot failures.
+
+Add a __noreorder wrapper for the no_reorder attribute and use
+it for initcalls.
+
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ include/linux/compiler-gcc.h | 5 +++++
+ include/linux/compiler.h     | 4 ++++
+ include/linux/init.h         | 2 +-
+ 3 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/compiler-gcc.h b/include/linux/compiler-gcc.h
+index c9303b82a5f3..8fcfaff4da62 100644
+--- a/include/linux/compiler-gcc.h
++++ b/include/linux/compiler-gcc.h
+@@ -369,6 +369,11 @@
+ #define __no_sanitize_address
+ #endif
+ 
++#if __GNUC__ >= 5
++/* Avoid reordering a top level statement */
++#define __noreorder    __attribute__((no_reorder))
++#endif
++
+ /*
+  * A trick to suppress uninitialized variable warning without generating any
+  * code
+diff --git a/include/linux/compiler.h b/include/linux/compiler.h
+index 1b7a3a625b62..a295608e9900 100644
+--- a/include/linux/compiler.h
++++ b/include/linux/compiler.h
+@@ -283,6 +283,10 @@ unsigned long read_word_at_a_time(const void *addr)
+ # define __optimize(level)
+ #endif
+ 
++#ifndef __noreorder
++#define __noreorder
++#endif
++
+ /* Compile time object size, -1 for unknown */
+ #ifndef __compiletime_object_size
+ # define __compiletime_object_size(obj) -1
+diff --git a/include/linux/init.h b/include/linux/init.h
+index d88bcecf6502..0243d096c944 100644
+--- a/include/linux/init.h
++++ b/include/linux/init.h
+@@ -194,7 +194,7 @@ extern bool initcall_debug;
+ 	__lto_initcall(__COUNTER__, __LINE__, fn, id, __sec)
+ #else
+   #define ___define_initcall(fn, id, __sec) \
+-	static initcall_t __initcall_##fn##id __used \
++	static initcall_t __initcall_##fn##id __used __noreorder \
+ 		__attribute__((__section__(#__sec ".init"))) = fn;
+ #endif
+ 
+-- 
+2.20.1
+
+
+From dd643d47a8a73516d1c2b88ae688ae1a6656fbe5 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sat, 26 Dec 2020 19:58:22 -0800
+Subject: [PATCH 11/35] lto: Add Link Time Optimization support for GCC
+
+This requires a modern version of GCC and various other patches in order
+to work. LTO results in a smaller kernel binary with better performance.
+
+Based off of work from Andi Kleen <ak@linux.intel.com>.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ Makefile                | 20 ++++++++++++++++++--
+ init/Kconfig            |  3 +++
+ scripts/Makefile.lib    |  2 +-
+ scripts/link-vmlinux.sh |  4 ++--
+ 4 files changed, 24 insertions(+), 5 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 0f7f320cf630..df96b91a47b1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -380,8 +380,8 @@ LD		= $(CROSS_COMPILE)ld
+ CC		= $(CROSS_COMPILE)gcc
+ LDGOLD		= $(CROSS_COMPILE)ld.gold
+ CPP		= $(CC) -E
+-AR		= $(CROSS_COMPILE)ar
+-NM		= $(CROSS_COMPILE)nm
++AR             ?= $(CROSS_COMPILE)ar
++NM             ?= $(CROSS_COMPILE)nm
+ STRIP		= $(CROSS_COMPILE)strip
+ OBJCOPY		= $(CROSS_COMPILE)objcopy
+ OBJDUMP		= $(CROSS_COMPILE)objdump
+@@ -692,6 +692,22 @@ ifdef CONFIG_GCC_GRAPHITE
+ KBUILD_CFLAGS	+= -fgraphite-identity -floop-nest-optimize
+ endif
+ 
++ifdef CONFIG_LTO_GCC
++LTO_CFLAGS	:= -flto -flto=jobserver -fno-fat-lto-objects \
++		   -fuse-linker-plugin -fwhole-program
++KBUILD_CFLAGS	+= $(LTO_CFLAGS)
++LTO_LDFLAGS	:= $(LTO_CFLAGS) -Wno-lto-type-mismatch -Wno-psabi \
++		   -Wno-stringop-overflow -flinker-output=nolto-rel
++LDFINAL		:= $(CONFIG_SHELL) $(srctree)/scripts/gcc-ld $(LTO_LDFLAGS)
++AR		:= $(CROSS_COMPILE)gcc-ar
++NM		:= $(CROSS_COMPILE)gcc-nm
++DISABLE_LTO	:= -fno-lto
++export DISABLE_LTO LDFINAL
++else
++LDFINAL		:= $(LD)
++export LDFINAL
++endif
++
+ # The arch Makefile can set ARCH_{CPP,A,C}FLAGS to override the default
+ # values of the respective KBUILD_* variables
+ ARCH_CPPFLAGS :=
+diff --git a/init/Kconfig b/init/Kconfig
+index 68bf69d85e2a..f0293f751222 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1218,6 +1218,9 @@ endchoice
+ config GCC_GRAPHITE
+ 	bool "Enable GCC Polyhedral Loop Optimization (Graphite)"
+ 
++config LTO_GCC
++	bool "Enable Link Time Optimization for GCC"
++
+ config SYSCTL
+ 	bool
+ 
+diff --git a/scripts/Makefile.lib b/scripts/Makefile.lib
+index cccc347aa75c..712e11554d5a 100644
+--- a/scripts/Makefile.lib
++++ b/scripts/Makefile.lib
+@@ -250,7 +250,7 @@ $(obj)/%: $(src)/%_shipped
+ # ---------------------------------------------------------------------------
+ 
+ quiet_cmd_ld = LD      $@
+-cmd_ld = $(LD) $(LDFLAGS) $(ldflags-y) $(LDFLAGS_$(@F)) \
++cmd_ld = $(LDFINAL) $(LDFLAGS) $(ldflags-y) $(LDFLAGS_$(@F)) \
+ 	       $(filter-out FORCE,$^) -o $@
+ 
+ # Objcopy
+diff --git a/scripts/link-vmlinux.sh b/scripts/link-vmlinux.sh
+index 27372a9f22fe..119c52e40efd 100644
+--- a/scripts/link-vmlinux.sh
++++ b/scripts/link-vmlinux.sh
+@@ -124,7 +124,7 @@ modpost_link()
+ 		info LD vmlinux.o
+ 	fi
+ 
+-	${LD} ${LDFLAGS} -r -o ${1} $(lto_lds) ${objects}
++	${LDFINAL} ${LDFLAGS} -r -o ${1} $(lto_lds) ${objects}
+ }
+ 
+ # If CONFIG_LTO_CLANG is selected, we postpone running recordmcount until
+@@ -149,7 +149,7 @@ vmlinux_link()
+ 	local objects
+ 
+ 	if [ "${SRCARCH}" != "um" ]; then
+-		local ld=${LD}
++		local ld=${LDFINAL}
+ 		local ldflags="${LDFLAGS} ${LDFLAGS_vmlinux}"
+ 
+ 		if [ -n "${LDFINAL_vmlinux}" ]; then
+-- 
+2.20.1
+
+
+From ab8663310e549b40dbb045624821a3e494e80c73 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Tue, 12 May 2020 12:00:08 -0700
+Subject: [PATCH 12/35] kbuild: Increase GCC automatic inline instruction limit
+ to 1000 for LTO
+
+GCC 10 updated its interprocedural optimizer's logic to have it make
+more conservative inlining decisions, resulting in worse syscall and
+hackbench performance compared to GCC 9. Although the max-inline-insns-
+auto parameter's value was not altered, increasing it from the -O3
+default of 30 to 1000 instructions yields improved performance with LTO,
+surpassing GCC 9.
+
+Do this only for LTO though because for non-LTO builds, this causes GCC
+to produce mountains of spurious -Wmaybe-used-uninitialized warnings.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index df96b91a47b1..05b2d8f5e0ee 100644
+--- a/Makefile
++++ b/Makefile
+@@ -695,7 +695,7 @@ endif
+ ifdef CONFIG_LTO_GCC
+ LTO_CFLAGS	:= -flto -flto=jobserver -fno-fat-lto-objects \
+ 		   -fuse-linker-plugin -fwhole-program
+-KBUILD_CFLAGS	+= $(LTO_CFLAGS)
++KBUILD_CFLAGS	+= $(LTO_CFLAGS) --param=max-inline-insns-auto=1000
+ LTO_LDFLAGS	:= $(LTO_CFLAGS) -Wno-lto-type-mismatch -Wno-psabi \
+ 		   -Wno-stringop-overflow -flinker-output=nolto-rel
+ LDFINAL		:= $(CONFIG_SHELL) $(srctree)/scripts/gcc-ld $(LTO_LDFLAGS)
+-- 
+2.20.1
+
+
+From addd5f1e048a4f7897ea9307f633803a882dd06f Mon Sep 17 00:00:00 2001
+From: Vaisakh Murali <mvaisakh@statixos.com>
+Date: Tue, 11 May 2021 16:26:14 +0530
+Subject: [PATCH 13/35] crypto: Move crypto __cacheline_aligned sections to
+ loose ____cacheline_aligned
+
+* With GCC 12, this spits out many section conflicts with other cacheline aligned vars.
+* The previous cacheline_align was introduced as a hardening feature, but this was restricted to certain data sections.
+
+Signed-off-by: Vaisakh Murali <mvaisakh@statixos.com>
+Change-Id: I75f4170c22005a29e789282ea667b2d78f6b16d1
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ crypto/aes_generic.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/crypto/aes_generic.c b/crypto/aes_generic.c
+index 13df33aca463..fddcbe3edb0a 100644
+--- a/crypto/aes_generic.c
++++ b/crypto/aes_generic.c
+@@ -64,7 +64,7 @@ static inline u8 byte(const u32 x, const unsigned n)
+ static const u32 rco_tab[10] = { 1, 2, 4, 8, 16, 32, 64, 128, 27, 54 };
+ 
+ /* cacheline-aligned to facilitate prefetching into cache */
+-__visible const u32 crypto_ft_tab[4][256] __cacheline_aligned = {
++__visible const u32 crypto_ft_tab[4][256] ____cacheline_aligned = {
+ 	{
+ 		0xa56363c6, 0x847c7cf8, 0x997777ee, 0x8d7b7bf6,
+ 		0x0df2f2ff, 0xbd6b6bd6, 0xb16f6fde, 0x54c5c591,
+@@ -328,7 +328,7 @@ __visible const u32 crypto_ft_tab[4][256] __cacheline_aligned = {
+ 	}
+ };
+ 
+-__visible const u32 crypto_fl_tab[4][256] __cacheline_aligned = {
++__visible const u32 crypto_fl_tab[4][256] ____cacheline_aligned = {
+ 	{
+ 		0x00000063, 0x0000007c, 0x00000077, 0x0000007b,
+ 		0x000000f2, 0x0000006b, 0x0000006f, 0x000000c5,
+@@ -592,7 +592,7 @@ __visible const u32 crypto_fl_tab[4][256] __cacheline_aligned = {
+ 	}
+ };
+ 
+-__visible const u32 crypto_it_tab[4][256] __cacheline_aligned = {
++__visible const u32 crypto_it_tab[4][256] ____cacheline_aligned = {
+ 	{
+ 		0x50a7f451, 0x5365417e, 0xc3a4171a, 0x965e273a,
+ 		0xcb6bab3b, 0xf1459d1f, 0xab58faac, 0x9303e34b,
+@@ -856,7 +856,7 @@ __visible const u32 crypto_it_tab[4][256] __cacheline_aligned = {
+ 	}
+ };
+ 
+-__visible const u32 crypto_il_tab[4][256] __cacheline_aligned = {
++__visible const u32 crypto_il_tab[4][256] ____cacheline_aligned = {
+ 	{
+ 		0x00000052, 0x00000009, 0x0000006a, 0x000000d5,
+ 		0x00000030, 0x00000036, 0x000000a5, 0x00000038,
+-- 
+2.20.1
+
+
+From 82ab042cc8ffceb3e38ad8dd972a71b0cae31623 Mon Sep 17 00:00:00 2001
+From: Vaisakh Murali <mvaisakh@statixos.com>
+Date: Tue, 11 May 2021 17:05:59 +0530
+Subject: [PATCH 14/35] drivers: msm-ipa: Only include emulation init with
+ CONFIG_IPA_EMULATION
+
+* Native code doesn't seem to have any use for this.
+
+Change-Id: I59b33af3a67b5b5a7f4b42dbffa6f41f21aae567
+Signed-off-by: Vaisakh Murali <mvaisakh@statixos.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ drivers/platform/msm/ipa/ipa_api.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/platform/msm/ipa/ipa_api.c b/drivers/platform/msm/ipa/ipa_api.c
+index d642a8e313cc..4a18ece2f0d8 100644
+--- a/drivers/platform/msm/ipa/ipa_api.c
++++ b/drivers/platform/msm/ipa/ipa_api.c
+@@ -3900,16 +3900,19 @@ static int ipa_pci_probe(
+ 	if (result && result != -EPROBE_DEFER)
+ 		pr_err("ipa: ipa3_pci_drv_probe failed\n");
+ 
++#ifdef CONFIG_IPA_EMULATION
+ 	if (running_emulation)
+ 		ipa_ut_module_init();
+-
++#endif
+ 	return result;
+ }
+ 
+ static void ipa_pci_remove(struct pci_dev *pci_dev)
+ {
++#ifdef CONFIG_IPA_EMULATION
+ 	if (running_emulation)
+ 		ipa_ut_module_exit();
++#endif
+ }
+ 
+ static void ipa_pci_shutdown(struct pci_dev *pci_dev)
+-- 
+2.20.1
+
+
+From 38b8cba84bd84a31417c74227a8c18ff709ed8af Mon Sep 17 00:00:00 2001
+From: Vaisakh Murali <mvaisakh@statixos.com>
+Date: Tue, 11 May 2021 18:21:03 +0530
+Subject: [PATCH 15/35] drivers: char: Drop reference to diag_unregister_hsic
+
+* Spits out undefined references (Yes I did try marking it as __visible and exporting the symbol)
+
+Signed-off-by: Vaisakh Murali <mvaisakh@statixos.com>
+Change-Id: I228c6599a127fe853f82a6918245c5a23f9d9f78
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ drivers/char/diag/diagfwd_bridge.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/drivers/char/diag/diagfwd_bridge.c b/drivers/char/diag/diagfwd_bridge.c
+index 0c5ac5475344..0ab2634c37cb 100644
+--- a/drivers/char/diag/diagfwd_bridge.c
++++ b/drivers/char/diag/diagfwd_bridge.c
+@@ -308,8 +308,6 @@ void diag_register_with_bridge(void)
+ 
+ void diag_unregister_bridge(void)
+ {
+-	if (hsic_interface_active)
+-		diag_unregister_hsic();
+-	else if (IS_ENABLED(CONFIG_MHI_BUS))
++	if (IS_ENABLED(CONFIG_MHI_BUS))
+ 		diag_unregister_mhi();
+ }
+-- 
+2.20.1
+
+
+From 9f8fd293cda68795e7932247f64d3c6f3a1987d6 Mon Sep 17 00:00:00 2001
+From: Vaisakh Murali <mvaisakh@statixos.com>
+Date: Thu, 13 May 2021 14:53:00 +0530
+Subject: [PATCH 16/35] scripts: vmlinux: Show LTO for GCC instead of LD
+
+* This will take a long time, so just notify that we're doing LTO tasks.
+
+Change-Id: Ia8c8feb8bb066bc4679a5eb19c0d83b4a1f2be0a
+Signed-off-by: Vaisakh Murali <mvaisakh@statixos.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ scripts/link-vmlinux.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/link-vmlinux.sh b/scripts/link-vmlinux.sh
+index 119c52e40efd..c6c37cadad03 100644
+--- a/scripts/link-vmlinux.sh
++++ b/scripts/link-vmlinux.sh
+@@ -116,7 +116,7 @@ modpost_link()
+ 			--end-group"
+ 	fi
+ 
+-	if [ -n "${CONFIG_LTO_CLANG}" ]; then
++	if [ -n "${CONFIG_LTO_CLANG}" ] || [ -n "${CONFIG_LTO_GCC}" ]; then
+ 		# This might take a while, so indicate that we're doing
+ 		# an LTO link
+ 		info LTO vmlinux.o
+-- 
+2.20.1
+
+
+From 4074b2ba06b5035c64fbfd8ed84611a37fe5bc7d Mon Sep 17 00:00:00 2001
+From: Nick Desaulniers <ndesaulniers@google.com>
+Date: Fri, 30 Aug 2019 13:34:59 -0700
+Subject: [PATCH 17/35] soc: qcom: spcom: fix section mismatch warning
+
+The KASAN builds have started producing the warning:
+WARNING: vmlinux.o(.text+0x8cad78): Section mismatch in reference from the function spcom_probe() to the function .init.text:spcom_register_chardev()
+The function spcom_probe() references
+the function __init spcom_register_chardev().
+This is often because spcom_probe lacks a __init
+annotation or the annotation of spcom_register_chardev is wrong.
+
+Indeed, spcom_register_chardev is called from the non-__init
+spcom_probe, so marking spcom_register_chardev __init is dangerous.
+
+Bug: 139442076
+Change-Id: I8feff354bcea8171d8f8130cfa8a230439efc9b0
+Signed-off-by: Nick Desaulniers <ndesaulniers@google.com>
+Signed-off-by: atndko <z1281552865@gmail.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ drivers/soc/qcom/spcom.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/soc/qcom/spcom.c b/drivers/soc/qcom/spcom.c
+index c51bff9d445f..64fb72f8a393 100644
+--- a/drivers/soc/qcom/spcom.c
++++ b/drivers/soc/qcom/spcom.c
+@@ -1753,7 +1753,7 @@ static int spcom_create_channel_chardev(const char *name)
+ 	return -EFAULT;
+ }
+ 
+-static int __init spcom_register_chardev(void)
++static int spcom_register_chardev(void)
+ {
+ 	int ret;
+ 	unsigned int baseminor = 0;
+-- 
+2.20.1
+
+
+From dde146875e3140d35c70cb6f83dede49ca433e3f Mon Sep 17 00:00:00 2001
+From: Danny Lin <danny@kdrag0n.dev>
+Date: Fri, 3 Apr 2020 11:50:04 -0700
+Subject: [PATCH 18/35] vmlinux.lds.h: Coalesce LLVM dead code elimination
+ sections
+
+A recent LLVM commit [1] made LLD stop coalescing these temporary
+LLVM-generated sections by default to match GNU ld behavior. However,
+the kernel can fail to boot if these sections remain separate in the
+image, and the overhead from retaining so many small sections is
+significant.
+
+Coalesce these specific sections to fix the issue rather than coalescing
+all .data..* sections, since some are created intentionally by Linux and
+should not be combined.
+
+Note that these sections are only generated when dead code elimination
+is enabled.
+
+[1] https://github.com/llvm/llvm-project/commit/9e33c096476ab5e02ab1c8442cc3cb4e32e29f17
+
+Suggested-by: Fangrui Song <maskray@google.com>
+Signed-off-by: Danny Lin <danny@kdrag0n.dev>
+Signed-off-by: Adam W. Willis <return.of.octobot@gmail.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ include/asm-generic/vmlinux.lds.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/include/asm-generic/vmlinux.lds.h b/include/asm-generic/vmlinux.lds.h
+index f57bcbefb286..1feb8be092f5 100644
+--- a/include/asm-generic/vmlinux.lds.h
++++ b/include/asm-generic/vmlinux.lds.h
+@@ -68,8 +68,8 @@
+ #if defined(CONFIG_LD_DEAD_CODE_DATA_ELIMINATION) || defined(CONFIG_LTO_CLANG)
+ #define TEXT_MAIN .text .text.[0-9a-zA-Z_]*
+ #define TEXT_CFI_MAIN .text.cfi .text.[0-9a-zA-Z_]*.cfi
+-#define DATA_MAIN .data .data.[0-9a-zA-Z_]* .data..compoundliteral* .data..L*
+-#define BSS_MAIN .bss .bss.[0-9a-zA-Z_]* .bss..compoundliteral* .bss..L*
++#define DATA_MAIN .data .data.[0-9a-zA-Z_]* .data..compoundliteral* .data..L* .data..L_MergedGlobals*
++#define BSS_MAIN .bss .bss.[0-9a-zA-Z_]* .bss..compoundliteral* .bss..L* .bss..L_MergedGlobals*
+ #else
+ #define TEXT_MAIN .text
+ #define TEXT_CFI_MAIN .text.cfi
+-- 
+2.20.1
+
+
+From a729eae8e62dbc68a387ae4981388858d46522c0 Mon Sep 17 00:00:00 2001
+From: Nicholas Piggin <npiggin@gmail.com>
+Date: Wed, 9 May 2018 22:59:58 +1000
+Subject: [PATCH 19/35] kbuild: Fix asm-generic/vmlinux.lds.h for
+ LD_DEAD_CODE_DATA_ELIMINATION
+
+KEEP more tables, and add the function/data section wildcard to more
+section selections.
+
+This is a little ad-hoc at the moment, but kernel code should be moved
+to consistently use .text..x (note: double dots) for explicit sections
+and all references to it in the linker script can be made with
+TEXT_MAIN, and similarly for other sections.
+
+For now, let's see if major architectures move to enabling this option
+then we can do some refactoring passes. Otherwise if it remains unused
+or superseded by LTO, this may not be required.
+
+Signed-off-by: Nicholas Piggin <npiggin@gmail.com>
+Signed-off-by: Masahiro Yamada <yamada.masahiro@socionext.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ include/asm-generic/vmlinux.lds.h | 39 +++++++++++++++++++------------
+ 1 file changed, 24 insertions(+), 15 deletions(-)
+
+diff --git a/include/asm-generic/vmlinux.lds.h b/include/asm-generic/vmlinux.lds.h
+index 1feb8be092f5..0bb5f885590d 100644
+--- a/include/asm-generic/vmlinux.lds.h
++++ b/include/asm-generic/vmlinux.lds.h
+@@ -64,17 +64,26 @@
+  * generates .data.identifier sections, which need to be pulled in with
+  * .data. We don't want to pull in .data..other sections, which Linux
+  * has defined. Same for text and bss.
++ *
++ * RODATA_MAIN is not used because existing code already defines .rodata.x
++ * sections to be brought in with rodata.
+  */
+ #if defined(CONFIG_LD_DEAD_CODE_DATA_ELIMINATION) || defined(CONFIG_LTO_CLANG)
+ #define TEXT_MAIN .text .text.[0-9a-zA-Z_]*
+ #define TEXT_CFI_MAIN .text.cfi .text.[0-9a-zA-Z_]*.cfi
+ #define DATA_MAIN .data .data.[0-9a-zA-Z_]* .data..compoundliteral* .data..L* .data..L_MergedGlobals*
++#define SDATA_MAIN .sdata .sdata.[0-9a-zA-Z_]* .sdata..compoundliteral* .sdata..L* .sdata..L_MergedGlobals*
++#define RODATA_MAIN .rodata .rodata.[0-9a-zA-Z_]* .rodata..compoundliteral* .rodata..L* .rodata..L_MergedGlobals*
+ #define BSS_MAIN .bss .bss.[0-9a-zA-Z_]* .bss..compoundliteral* .bss..L* .bss..L_MergedGlobals*
++#define SBSS_MAIN .sbss .sbss.[0-9a-zA-Z_]* .sbss..compoundliteral* .sbss..L* .sbss..L_MergedGlobals*
+ #else
+ #define TEXT_MAIN .text
+ #define TEXT_CFI_MAIN .text.cfi
+ #define DATA_MAIN .data
++#define SDATA_MAIN .sdata
++#define RODATA_MAIN .rodata
+ #define BSS_MAIN .bss
++#define SBSS_MAIN .sbss
+ #endif
+ 
+ /*
+@@ -115,7 +124,7 @@
+ 
+ #ifdef CONFIG_TRACE_BRANCH_PROFILING
+ #define LIKELY_PROFILE()	VMLINUX_SYMBOL(__start_annotated_branch_profile) = .; \
+-				*(_ftrace_annotated_branch)			      \
++				KEEP(*(_ftrace_annotated_branch))	\
+ 				VMLINUX_SYMBOL(__stop_annotated_branch_profile) = .;
+ #else
+ #define LIKELY_PROFILE()
+@@ -123,7 +132,7 @@
+ 
+ #ifdef CONFIG_PROFILE_ALL_BRANCHES
+ #define BRANCH_PROFILE()	VMLINUX_SYMBOL(__start_branch_profile) = .;   \
+-				*(_ftrace_branch)			      \
++				KEEP(*(_ftrace_branch))			\
+ 				VMLINUX_SYMBOL(__stop_branch_profile) = .;
+ #else
+ #define BRANCH_PROFILE()
+@@ -222,8 +231,8 @@
+ 	*(DATA_MAIN)							\
+ 	*(.ref.data)							\
+ 	*(.data..shared_aligned) /* percpu related */			\
+-	MEM_KEEP(init.data)						\
+-	MEM_KEEP(exit.data)						\
++	MEM_KEEP(init.data*)						\
++	MEM_KEEP(exit.data*)						\
+ 	*(.data.unlikely)						\
+ 	STRUCT_ALIGN();							\
+ 	*(__tracepoints)						\
+@@ -268,7 +277,7 @@
+ #define INIT_TASK_DATA(align)						\
+ 	. = ALIGN(align);						\
+ 	VMLINUX_SYMBOL(__start_init_task) = .;				\
+-	*(.data..init_task)						\
++	KEEP(*(.data..init_task))					\
+ 	VMLINUX_SYMBOL(__end_init_task) = .;
+ 
+ /*
+@@ -470,8 +479,8 @@
+ 		*(TEXT_CFI_MAIN) 					\
+ 		*(.ref.text)						\
+ 		*(.text.asan.* .text.tsan.*)				\
+-	MEM_KEEP(init.text)						\
+-	MEM_KEEP(exit.text)						\
++	MEM_KEEP(init.text*)						\
++	MEM_KEEP(exit.text*)						\
+ 
+ 
+ /* sched.text is aling to function alignment to secure we have same
+@@ -562,8 +571,8 @@
+ /* init and exit section handling */
+ #define INIT_DATA							\
+ 	KEEP(*(SORT(___kentry+*)))					\
+-	*(.init.data)							\
+-	MEM_DISCARD(init.data)						\
++	*(.init.data init.data.*)					\
++	MEM_DISCARD(init.data*)						\
+ 	KERNEL_CTORS()							\
+ 	MCOUNT_REC()							\
+ 	*(.init.rodata .init.rodata.*)					\
+@@ -587,14 +596,14 @@
+ #define INIT_TEXT							\
+ 	*(.init.text .init.text.*)					\
+ 	*(.text.startup)						\
+-	MEM_DISCARD(init.text)
++	MEM_DISCARD(init.text*)
+ 
+ #define EXIT_DATA							\
+-	*(.exit.data)							\
++	*(.exit.data .exit.data.*)					\
+ 	*(.fini_array)							\
+ 	*(.dtors)							\
+-	MEM_DISCARD(exit.data)						\
+-	MEM_DISCARD(exit.rodata)
++	MEM_DISCARD(exit.data*)						\
++	MEM_DISCARD(exit.rodata*)
+ 
+ #define EXIT_TEXT							\
+ 	*(.exit.text)							\
+@@ -612,7 +621,7 @@
+ 	. = ALIGN(sbss_align);						\
+ 	.sbss : AT(ADDR(.sbss) - LOAD_OFFSET) {				\
+ 		*(.dynsbss)						\
+-		*(.sbss)						\
++		*(SBSS_MAIN)						\
+ 		*(.scommon)						\
+ 	}
+ 
+@@ -744,7 +753,7 @@
+ #define NOTES								\
+ 	.notes : AT(ADDR(.notes) - LOAD_OFFSET) {			\
+ 		VMLINUX_SYMBOL(__start_notes) = .;			\
+-		*(.note.*)						\
++		KEEP(*(.note.*))					\
+ 		VMLINUX_SYMBOL(__stop_notes) = .;			\
+ 	}
+ 
+-- 
+2.20.1
+
+
+From cc366a274088112000eba0641a189d665c6a8bd1 Mon Sep 17 00:00:00 2001
+From: Andi Kleen <ak@linux.intel.com>
+Date: Sat, 8 Feb 2014 09:01:07 +0100
+Subject: [PATCH 20/35] lto: Make asmlinkage __visible
+
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+Link: http://lkml.kernel.org/r/1391846481-31491-3-git-send-email-ak@linux.intel.com
+Signed-off-by: H. Peter Anvin <hpa@linux.intel.com>
+Signed-off-by: kdrag0n <dragon@khronodragon.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ include/linux/linkage.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/include/linux/linkage.h b/include/linux/linkage.h
+index 553b17662930..f50db0a762ee 100644
+--- a/include/linux/linkage.h
++++ b/include/linux/linkage.h
+@@ -13,9 +13,9 @@
+ #endif
+ 
+ #ifdef __cplusplus
+-#define CPP_ASMLINKAGE extern "C"
++#define CPP_ASMLINKAGE extern "C" __visible
+ #else
+-#define CPP_ASMLINKAGE
++#define CPP_ASMLINKAGE __visible
+ #endif
+ 
+ #ifndef asmlinkage
+-- 
+2.20.1
+
+
+From 01d664507aa1e2cb4f27a12745b969abece0e25f Mon Sep 17 00:00:00 2001
+From: Andi Kleen <ak@linux.intel.com>
+Date: Sun, 9 Apr 2017 22:10:40 -0700
+Subject: [PATCH 21/35] lto: Use C version for SYSCALL_ALIAS
+
+LTO doesn't like the assembler aliasing used for SYSCALL_ALIAS.
+Replace it with C aliasing.
+
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+Signed-off-by: kdrag0n <dragon@khronodragon.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ include/linux/linkage.h | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/include/linux/linkage.h b/include/linux/linkage.h
+index f50db0a762ee..ca0e7a294ec6 100644
+--- a/include/linux/linkage.h
++++ b/include/linux/linkage.h
+@@ -28,10 +28,8 @@
+ #endif
+ 
+ #ifndef SYSCALL_ALIAS
+-#define SYSCALL_ALIAS(alias, name) asm(			\
+-	".globl " VMLINUX_SYMBOL_STR(alias) "\n\t"	\
+-	".set   " VMLINUX_SYMBOL_STR(alias) ","		\
+-		  VMLINUX_SYMBOL_STR(name))
++#define SYSCALL_ALIAS(a, name) \
++	__visible typeof(a) a __attribute__((alias(__stringify(name))))
+ #endif
+ 
+ #define __page_aligned_data	__section(.data..page_aligned) __aligned(PAGE_SIZE)
+-- 
+2.20.1
+
+
+From 0bca31edae079a9324e292eecb9491faae692f1c Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Tue, 19 Jan 2021 10:05:20 -0800
+Subject: [PATCH 22/35] arm64: Fix LSE atomics with GCC LTO
+
+GCC LTO also requires specifying the preamble in each code block that
+uses LSE atomics.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/include/asm/lse.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/include/asm/lse.h b/arch/arm64/include/asm/lse.h
+index 1ee1307a0698..cce89d6f442c 100644
+--- a/arch/arm64/include/asm/lse.h
++++ b/arch/arm64/include/asm/lse.h
+@@ -20,7 +20,7 @@
+ 
+ #else	/* __ASSEMBLER__ */
+ 
+-#ifdef CONFIG_LTO_CLANG
++#if defined(CONFIG_LTO_CLANG) || defined(CONFIG_LTO_GCC)
+ #define __LSE_PREAMBLE	".arch armv8-a+lse\n"
+ #else
+ __asm__(".arch_extension	lse");
+-- 
+2.20.1
+
+
+From 89c5fa0f1745c41b292b14ec9d94eb4109cc9f5f Mon Sep 17 00:00:00 2001
+From: Jebaitedneko <Jebaitedneko@gmail.com>
+Date: Mon, 21 Jun 2021 11:23:30 +0530
+Subject: [PATCH 23/35] Makefile: allow O3 for a few more flags
+
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ Makefile | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 05b2d8f5e0ee..587317ed2df3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -697,7 +697,7 @@ LTO_CFLAGS	:= -flto -flto=jobserver -fno-fat-lto-objects \
+ 		   -fuse-linker-plugin -fwhole-program
+ KBUILD_CFLAGS	+= $(LTO_CFLAGS) --param=max-inline-insns-auto=1000
+ LTO_LDFLAGS	:= $(LTO_CFLAGS) -Wno-lto-type-mismatch -Wno-psabi \
+-		   -Wno-stringop-overflow -flinker-output=nolto-rel
++		   -Wno-stringop-overflow -flinker-output=nolto-rel -O3
+ LDFINAL		:= $(CONFIG_SHELL) $(srctree)/scripts/gcc-ld $(LTO_LDFLAGS)
+ AR		:= $(CROSS_COMPILE)gcc-ar
+ NM		:= $(CROSS_COMPILE)gcc-nm
+@@ -834,6 +834,9 @@ KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+ 
+ ifeq ($(ld-name),lld)
+ LDFLAGS += --lto-O3
++else
++LDFLAGS += -O3
++KBUILD_LDFLAGS += $(LDFLAGS)
+ endif
+ 
+ KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
+-- 
+2.20.1
+
+
+From c7c3abea3d69b2786a340d8e1a00ee732b037079 Mon Sep 17 00:00:00 2001
+From: Vaisakh Murali <mvaisakh@statixos.com>
+Date: Sat, 26 Jun 2021 11:58:37 +0000
+Subject: [PATCH 24/35]  Makefile: Enable intraprocedural pointer analysis for
+ LTO
+
+* GCC contains several intraprocedural optimisations and pointer analysis
+  is one such optimisation. Enabling this flag performs intraprocedural
+  pointer analysis, modification and reference analysis. This analyzes
+  individual functions one by one, hence increasing the overall build
+  time, but potentially producing a better binary, especially when
+  built with LTO [1].
+
+[1]: https://github.com/InBetweenNames/gentooLTO/blob/master/sys-config/ltoize/files/make.conf.lto.defines#L35
+
+Signed-off-by: Vaisakh Murali <mvaisakh@statixos.com>
+Signed-off-by: Jebaitedneko <Jebaitedneko@gmail.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 587317ed2df3..da6deadc266a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -693,7 +693,7 @@ KBUILD_CFLAGS	+= -fgraphite-identity -floop-nest-optimize
+ endif
+ 
+ ifdef CONFIG_LTO_GCC
+-LTO_CFLAGS	:= -flto -flto=jobserver -fno-fat-lto-objects \
++LTO_CFLAGS	:= -flto -flto=jobserver -fipa-pta -fno-fat-lto-objects \
+ 		   -fuse-linker-plugin -fwhole-program
+ KBUILD_CFLAGS	+= $(LTO_CFLAGS) --param=max-inline-insns-auto=1000
+ LTO_LDFLAGS	:= $(LTO_CFLAGS) -Wno-lto-type-mismatch -Wno-psabi \
+-- 
+2.20.1
+
+
+From f2c8e9b68dec1e881f9fc9f6bc6a1aed4f165fda Mon Sep 17 00:00:00 2001
+From: Paul Kocialkowski <contact@paulk.fr>
+Date: Mon, 2 Jul 2018 11:16:59 +0200
+Subject: [PATCH 25/35] arm64: Use aarch64elf and aarch64elfb emulation mode
+ variants
+
+The aarch64linux and aarch64linuxb emulation modes are not supported by
+bare-metal toolchains and Linux using them forbids building the kernel
+with these toolchains.
+
+Since there is apparently no reason to target these emulation modes, the
+more generic elf modes are used instead, allowing to build on bare-metal
+toolchains as well as the already-supported ones.
+
+Fixes: 3d6a7b99e3fa ("arm64: ensure the kernel is compiled for LP64")
+
+Cc: stable@vger.kernel.org
+Acked-by: Will Deacon <will.deacon@arm.com>
+Signed-off-by: Paul Kocialkowski <contact@paulk.fr>
+Signed-off-by: Catalin Marinas <catalin.marinas@arm.com>
+Signed-off-by: Danny Lin <danny@kdrag0n.dev>
+(cherry picked from commit a32dd7ae21ac06b09e12224a9c0835edc85684b4)
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/Makefile | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index bc7f4a807b29..278b80eef0b4 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -123,7 +123,7 @@ LD		+= -EB
+ ifeq ($(ld-name),gold)
+ LDFLAGS		+= -maarch64_elf64_be_vec
+ else
+-LDFLAGS		+= -maarch64linuxb
++LDFLAGS		+= -maarch64elfb
+ endif
+ UTS_MACHINE	:= aarch64_be
+ else
+@@ -134,7 +134,7 @@ LD		+= -EL
+ ifeq ($(ld-name),gold)
+ LDFLAGS		+= -maarch64_elf64_le_vec
+ else
+-LDFLAGS		+= -maarch64linux
++LDFLAGS		+= -maarch64elf
+ endif
+ UTS_MACHINE	:= aarch64
+ endif
+-- 
+2.20.1
+
+
+From 3b6f0d8df7f24cb9d5fc227f2dc2fff4f916ca0c Mon Sep 17 00:00:00 2001
+From: "Jason A. Donenfeld" <Jason@zx2c4.com>
+Date: Fri, 3 Nov 2017 15:18:58 +0100
+Subject: [PATCH 26/35] arm64: support __int128 on gcc 5+
+
+Versions of gcc prior to gcc 5 emitted a __multi3 function call when
+dealing with TI types, resulting in failures when trying to link to
+libgcc, and more generally, bad performance. However, since gcc 5,
+the compiler supports actually emitting fast instructions, which means
+we can at long last enable this option and receive the speedups.
+
+The gcc commit that added proper Aarch64 support is:
+https://gcc.gnu.org/git/?p=gcc.git;a=commitdiff;h=d1ae7bb994f49316f6f63e6173f2931e837a351d
+This commit appears to be part of the gcc 5 release.
+
+There are still a few instructions, __ashlti3 and __ashrti3, which
+require libgcc, which is fine. Rather than linking to libgcc, we
+simply provide them ourselves, since they're not that complicated.
+
+Signed-off-by: Jason A. Donenfeld <Jason@zx2c4.com>
+Signed-off-by: Will Deacon <will.deacon@arm.com>
+Change-Id: I5642a23aa97b5eae5361f7b489e0c126bd4a5682
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+(cherry picked from commit 5ebbae284cfbe9a2a1b791a1f62e3be694b3b16b)
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/Makefile      |  2 ++
+ arch/arm64/lib/Makefile  |  2 +-
+ arch/arm64/lib/tishift.S | 59 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 62 insertions(+), 1 deletion(-)
+ create mode 100644 arch/arm64/lib/tishift.S
+
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index 278b80eef0b4..edd6bd36df51 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -115,6 +115,8 @@ ifeq ($(CONFIG_SHADOW_CALL_STACK), y)
+ KBUILD_CFLAGS	+= -ffixed-x18
+ endif
+ 
++KBUILD_CFLAGS	+= $(call cc-ifversion, -ge, 0500, -DCONFIG_ARCH_SUPPORTS_INT128)
++
+ ifeq ($(CONFIG_CPU_BIG_ENDIAN), y)
+ KBUILD_CPPFLAGS	+= -mbig-endian
+ CHECKFLAGS	+= -D__AARCH64EB__
+diff --git a/arch/arm64/lib/Makefile b/arch/arm64/lib/Makefile
+index 11c4fbb7949e..d4718377b4e9 100644
+--- a/arch/arm64/lib/Makefile
++++ b/arch/arm64/lib/Makefile
+@@ -3,7 +3,7 @@ lib-y		:= clear_user.o delay.o copy_from_user.o		\
+ 		   copy_to_user.o copy_in_user.o copy_page.o		\
+ 		   clear_page.o memchr.o memcpy.o memmove.o memset.o	\
+ 		   memcmp.o strcmp.o strncmp.o strlen.o strnlen.o	\
+-		   strchr.o strrchr.o csum.o
++		   strchr.o strrchr.o csum.o tishift.o
+ 
+ ifeq ($(CONFIG_KERNEL_MODE_NEON), y)
+ obj-$(CONFIG_XOR_BLOCKS)	+= xor-neon.o
+diff --git a/arch/arm64/lib/tishift.S b/arch/arm64/lib/tishift.S
+new file mode 100644
+index 000000000000..7236776655ed
+--- /dev/null
++++ b/arch/arm64/lib/tishift.S
+@@ -0,0 +1,59 @@
++/*
++ * Copyright (C) 2017 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <linux/linkage.h>
++
++ENTRY(__ashlti3)
++	cbz	x2, 1f
++	mov	x3, #64
++	sub	x3, x3, x2
++	cmp	x3, #0
++	b.le	2f
++	lsl	x1, x1, x2
++	lsr	x3, x0, x3
++	lsl	x2, x0, x2
++	orr	x1, x1, x3
++	mov	x0, x2
++1:
++	ret
++2:
++	neg	w1, w3
++	mov	x2, #0
++	lsl	x1, x0, x1
++	mov	x0, x2
++	ret
++ENDPROC(__ashlti3)
++
++ENTRY(__ashrti3)
++	cbz	x2, 3f
++	mov	x3, #64
++	sub	x3, x3, x2
++	cmp	x3, #0
++	b.le	4f
++	lsr	x0, x0, x2
++	lsl	x3, x1, x3
++	asr	x2, x1, x2
++	orr	x0, x0, x3
++	mov	x1, x2
++3:
++	ret
++4:
++	neg	w0, w3
++	asr	x2, x1, #63
++	asr	x0, x1, x0
++	mov	x1, x2
++	ret
++ENDPROC(__ashrti3)
+-- 
+2.20.1
+
+
+From 9bb13ec4ac1b8eb703c4251397db4ba9983ec7f0 Mon Sep 17 00:00:00 2001
+From: "Jason A. Donenfeld" <Jason@zx2c4.com>
+Date: Sat, 23 Dec 2017 01:43:23 +0100
+Subject: [PATCH 27/35] arm64: support __int128 with clang
+
+Commit fb8722735f50 ("arm64: support __int128 on gcc 5+") added support
+for arm64 __int128 with gcc with a version-conditional, but neglected to
+enable this for clang, which in fact appears to support aarch64 __int128.
+This commit therefore enables it if the compiler is clang, using the
+same type of makefile conditional used elsewhere in the tree.
+
+Signed-off-by: Jason A. Donenfeld <Jason@zx2c4.com>
+Signed-off-by: Will Deacon <will.deacon@arm.com>
+Change-Id: I24247d985f0c91b3775b7ba16144ca710f59f77c
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+(cherry picked from commit 6471732f55dde74c82cf73e92827eecaa72b15ae)
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/Makefile | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index edd6bd36df51..ca25d7511b28 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -115,7 +115,11 @@ ifeq ($(CONFIG_SHADOW_CALL_STACK), y)
+ KBUILD_CFLAGS	+= -ffixed-x18
+ endif
+ 
++ifeq ($(cc-name),clang)
++KBUILD_CFLAGS	+= -DCONFIG_ARCH_SUPPORTS_INT128
++else
+ KBUILD_CFLAGS	+= $(call cc-ifversion, -ge, 0500, -DCONFIG_ARCH_SUPPORTS_INT128)
++endif
+ 
+ ifeq ($(CONFIG_CPU_BIG_ENDIAN), y)
+ KBUILD_CPPFLAGS	+= -mbig-endian
+-- 
+2.20.1
+
+
+From 1e29c4850c617523f827612322330d0404f88b86 Mon Sep 17 00:00:00 2001
+From: "Jason A. Donenfeld" <Jason@zx2c4.com>
+Date: Tue, 7 Nov 2017 01:49:54 +0000
+Subject: [PATCH 28/35] arm64: Implement __lshrti3 library function
+
+Commit fb8722735f50 ("arm64: support __int128 on gcc 5+") added support
+for the __int128 data type, but this breaks the build in some configurations
+where GCC ends up emitting calls to the __lshrti3 helper in libgcc, which
+results in a link error:
+
+  kernel/sched/fair.o: In function `__calc_delta':
+  fair.c:(.text+0xca0): undefined reference to `__lshrti3'
+  kernel/time/timekeeping.o: In function `timekeeping_resume':
+  timekeeping.c:(.text+0x3f60): undefined reference to `__lshrti3'
+  make: *** [vmlinux] Error 1
+
+Fix the build by providing an implementation of __lshrti3, like we do
+already for __ashlti3 and __ashrti3.
+
+Reported-by: Arnd Bergmann <arnd@arndb.de>
+Signed-off-by: Jason A. Donenfeld <Jason@zx2c4.com>
+Signed-off-by: Will Deacon <will.deacon@arm.com>
+Signed-off-by: Danny Lin <danny@kdrag0n.dev>
+Signed-off-by: Yousef Algadri <yusufgadrie@gmail.com>
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+(cherry picked from commit 20a28bc65be75424e8cc89f8f2b7a91368162273)
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/lib/tishift.S | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/arch/arm64/lib/tishift.S b/arch/arm64/lib/tishift.S
+index 7236776655ed..0179a43cc045 100644
+--- a/arch/arm64/lib/tishift.S
++++ b/arch/arm64/lib/tishift.S
+@@ -57,3 +57,24 @@ ENTRY(__ashrti3)
+ 	mov	x1, x2
+ 	ret
+ ENDPROC(__ashrti3)
++
++ENTRY(__lshrti3)
++	cbz	x2, 1f
++	mov	x3, #64
++	sub	x3, x3, x2
++	cmp	x3, #0
++	b.le	2f
++	lsr	x0, x0, x2
++	lsl	x3, x1, x3
++	lsr	x2, x1, x2
++	orr	x0, x0, x3
++	mov	x1, x2
++1:
++	ret
++2:
++	neg	w0, w3
++	mov	x2, #0
++	lsr	x0, x1, x0
++	mov	x1, x2
++	ret
++ENDPROC(__lshrti3)
+-- 
+2.20.1
+
+
+From 19ca87c9e990db2c5ed562a8d1eca2bf662f1704 Mon Sep 17 00:00:00 2001
+From: "Jason A. Donenfeld" <Jason@zx2c4.com>
+Date: Tue, 7 Nov 2017 11:24:04 +0900
+Subject: [PATCH 29/35] arm64: make label allocation style consistent in
+ tishift
+
+This is entirely cosmetic, but somehow it was missed when sending
+differing versions of this patch. This just makes the file a bit more
+uniform.
+
+Signed-off-by: Jason A. Donenfeld <Jason@zx2c4.com>
+Signed-off-by: Catalin Marinas <catalin.marinas@arm.com>
+Signed-off-by: Danny Lin <danny@kdrag0n.dev>
+Signed-off-by: Yousef Algadri <yusufgadrie@gmail.com>
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+(cherry picked from commit 35121b8c5a61d05aa29a6b6a74fbcb36945b3039)
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/lib/tishift.S | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/lib/tishift.S b/arch/arm64/lib/tishift.S
+index 0179a43cc045..d3db9b2cd479 100644
+--- a/arch/arm64/lib/tishift.S
++++ b/arch/arm64/lib/tishift.S
+@@ -38,19 +38,19 @@ ENTRY(__ashlti3)
+ ENDPROC(__ashlti3)
+ 
+ ENTRY(__ashrti3)
+-	cbz	x2, 3f
++	cbz	x2, 1f
+ 	mov	x3, #64
+ 	sub	x3, x3, x2
+ 	cmp	x3, #0
+-	b.le	4f
++	b.le	2f
+ 	lsr	x0, x0, x2
+ 	lsl	x3, x1, x3
+ 	asr	x2, x1, x2
+ 	orr	x0, x0, x3
+ 	mov	x1, x2
+-3:
++1:
+ 	ret
+-4:
++2:
+ 	neg	w0, w3
+ 	asr	x2, x1, #63
+ 	asr	x0, x1, x0
+-- 
+2.20.1
+
+
+From 5c29dd8e99883d5d53d3c0a0ba5af4697c66f4f2 Mon Sep 17 00:00:00 2001
+From: Olof Johansson <olof@lixom.net>
+Date: Mon, 23 Jul 2018 20:35:48 +0530
+Subject: [PATCH 30/35] =?UTF-8?q?BACKPORT:=20arm64:=20build=20with=20barem?=
+ =?UTF-8?q?etal=20linker=20target=20instead=20of=20Linux=20when=20avail?=
+ =?UTF-8?q?=E2=80=A6=20=E2=80=A6able?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Not all toolchains have the baremetal elf targets, RedHat/Fedora ones
+in particular. So, probe for whether it's available and use the previous
+(linux) targets if it isn't.
+
+Change-Id: I90788796371e5705e31e75fd0ccffced5c419c68
+Reported-by: Laura Abbott <labbott@redhat.com>
+Tested-by: Laura Abbott <labbott@redhat.com>
+Acked-by: Masahiro Yamada <yamada.masahiro@socionext.com>
+Cc: Paul Kocialkowski <contact@paulk.fr>
+Signed-off-by: Olof Johansson <olof@lixom.net>
+Signed-off-by: Will Deacon <will.deacon@arm.com>
+[panchajanya1999: Align commit with previous changes from 1256ef8502d970b9b2b2f4f2db58b34a13c2d431]
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/Makefile    | 7 +++++--
+ scripts/Kbuild.include | 4 ++--
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index ca25d7511b28..225b7b2f302e 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -129,7 +129,9 @@ LD		+= -EB
+ ifeq ($(ld-name),gold)
+ LDFLAGS		+= -maarch64_elf64_be_vec
+ else
+-LDFLAGS		+= -maarch64elfb
++# Prefer the baremetal ELF build target, but not all toolchains include
++# it so fall back to the standard linux version if needed.
++LDFLAGS		+= $(call ld-option, -maarch64elfb, -maarch64linuxb)
+ endif
+ UTS_MACHINE	:= aarch64_be
+ else
+@@ -140,7 +142,8 @@ LD		+= -EL
+ ifeq ($(ld-name),gold)
+ LDFLAGS		+= -maarch64_elf64_le_vec
+ else
+-LDFLAGS		+= -maarch64elf
++# Same as above, prefer ELF but fall back to linux target if needed.
++LDFLAGS		+= $(call ld-option, -maarch64elf, -maarch64linux)
+ endif
+ UTS_MACHINE	:= aarch64
+ endif
+diff --git a/scripts/Kbuild.include b/scripts/Kbuild.include
+index 77274ab0c2d2..57279df61046 100644
+--- a/scripts/Kbuild.include
++++ b/scripts/Kbuild.include
+@@ -196,8 +196,8 @@ cc-ldoption = $(call try-run,\
+ 	$(CC) $(1) $(KBUILD_CPPFLAGS) $(CC_OPTION_CFLAGS) -nostdlib -x c /dev/null -o "$$TMP",$(1),$(2))
+ 
+ # ld-option
+-# Usage: LDFLAGS += $(call ld-option, -X)
+-ld-option = $(call try-run, $(LD) $(LDFLAGS) $(1) -v,$(1),$(2))
++# Usage: LDFLAGS += $(call ld-option, -X, -Y)
++ld-option = $(call try-run, $(LD) $(LDFLAGS) $(1) -v,$(1),$(2),$(3))
+ 
+ # ar-option
+ # Usage: KBUILD_ARFLAGS := $(call ar-option,D)
+-- 
+2.20.1
+
+
+From 1052af51d687b283bd6088989bda7d8f997a7287 Mon Sep 17 00:00:00 2001
+From: Masahiro Yamada <yamada.masahiro@socionext.com>
+Date: Thu, 5 Jul 2018 21:25:33 +0530
+Subject: [PATCH 31/35] BACKPORT: arm64: add endianness option to LDFLAGS
+ instead of LD With the recent syntax extension, Kconfig is now able to
+ evaluate the compiler / toolchain capability.
+
+However, accumulating flags to 'LD' is not compatible with the way
+it works; 'LD' must be passed to Kconfig to call $(ld-option,...)
+from Kconfig files.  If you tweak 'LD' in arch Makefile depending on
+CONFIG_CPU_BIG_ENDIAN, this would end up with circular dependency
+between Makefile and Kconfig.
+
+Change-Id: I6636453f3a27adeec26f69619c79f7068695edb5
+Acked-by: Will Deacon <will.deacon@arm.com>
+Signed-off-by: Masahiro Yamada <yamada.masahiro@socionext.com>
+Signed-off-by: Catalin Marinas <catalin.marinas@arm.com>
+[panchajanya1999: Align to k4.14]
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/Makefile | 10 ++++------
+ 1 file changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index 225b7b2f302e..0d150a191b92 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -125,25 +125,23 @@ ifeq ($(CONFIG_CPU_BIG_ENDIAN), y)
+ KBUILD_CPPFLAGS	+= -mbig-endian
+ CHECKFLAGS	+= -D__AARCH64EB__
+ AS		+= -EB
+-LD		+= -EB
+ ifeq ($(ld-name),gold)
+-LDFLAGS		+= -maarch64_elf64_be_vec
++LDFLAGS		+= -EB -maarch64_elf64_be_vec
+ else
+ # Prefer the baremetal ELF build target, but not all toolchains include
+ # it so fall back to the standard linux version if needed.
+-LDFLAGS		+= $(call ld-option, -maarch64elfb, -maarch64linuxb)
++LDFLAGS		+=  -EB $(call ld-option, -maarch64elfb, -maarch64linuxb)
+ endif
+ UTS_MACHINE	:= aarch64_be
+ else
+ KBUILD_CPPFLAGS	+= -mlittle-endian
+ CHECKFLAGS	+= -D__AARCH64EL__
+ AS		+= -EL
+-LD		+= -EL
+ ifeq ($(ld-name),gold)
+-LDFLAGS		+= -maarch64_elf64_le_vec
++LDFLAGS		+= -EL -maarch64_elf64_le_vec
+ else
+ # Same as above, prefer ELF but fall back to linux target if needed.
+-LDFLAGS		+= $(call ld-option, -maarch64elf, -maarch64linux)
++LDFLAGS		+= -EL $(call ld-option, -maarch64elf, -maarch64linux)
+ endif
+ UTS_MACHINE	:= aarch64
+ endif
+-- 
+2.20.1
+
+
+From a7410b72482cab08c820effc5b71f313d799ef6b Mon Sep 17 00:00:00 2001
+From: Andrew Delgadillo <adelg@google.com>
+Date: Wed, 11 Aug 2021 20:39:53 +0530
+Subject: [PATCH 32/35] BACKPORT: arm64: clean vdso & vdso32 files commit
+ a5b8ca9 ("arm64: do not descend to vdso directories twice") changes the
+ cleaning behavior of arm64's vdso files, in that vdso.lds, vdso.so, and
+ vdso.so.dbg are not removed upon a 'make clean/mrproper':
+
+$ make defconfig ARCH=arm64
+$ make ARCH=arm64
+$ make mrproper ARCH=arm64
+$ git clean -nxdf
+Would remove arch/arm64/kernel/vdso/vdso.lds
+Would remove arch/arm64/kernel/vdso/vdso.so
+Would remove arch/arm64/kernel/vdso/vdso.so.dbg
+
+To remedy this, manually descend into arch/arm64/kernel/vdso upon
+cleaning.
+
+After this commit:
+$ make defconfig ARCH=arm64
+$ make ARCH=arm64
+$ make mrproper ARCH=arm64
+$ git clean -nxdf
+<empty>
+
+Similar results are obtained for the vdso32 equivalent.
+
+Change-Id: I4459caa4f0536b7538d47929df929c56ff4f2bf0
+Signed-off-by: Andrew Delgadillo <adelg@google.com>
+Cc: stable@vger.kernel.org
+Fixes: a5b8ca9 ("arm64: do not descend to vdso directories twice")
+Link: https://lore.kernel.org/r/20210810231755.1743524-1-adelg@google.com
+Signed-off-by: Will Deacon <will@kernel.org>
+[panchajanya1999: Align with CAF changes]
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ arch/arm64/Makefile | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index 0d150a191b92..e399278fd073 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -271,6 +271,8 @@ vdso_install:
+ archclean:
+ 	$(Q)$(MAKE) $(clean)=$(boot)
+ 	$(Q)$(MAKE) $(clean)=$(boot)/dts
++	$(Q)$(MAKE) $(clean)=arch/arm64/kernel/vdso
++	$(Q)$(MAKE) $(clean)=arch/arm64/kernel/vdso32
+ 
+ ifeq ($(KBUILD_EXTMOD),)
+ # We need to generate vdso-offsets.h before compiling certain files in kernel/.
+-- 
+2.20.1
+
+
+From 714b3b5de000b6684e82be45d210e3948008c439 Mon Sep 17 00:00:00 2001
+From: reaPeR1010 <reaPeR10x10x@gmail.com>
+Date: Thu, 28 Oct 2021 10:55:40 +0000
+Subject: [PATCH 33/35] Makefile: shift to -O3 for lld linker
+
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ Makefile | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index da6deadc266a..68c5783ac9e0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -833,8 +833,6 @@ KBUILD_CFLAGS += $(call cc-option,-fno-delete-null-pointer-checks,)
+ KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+ 
+ ifeq ($(ld-name),lld)
+-LDFLAGS += --lto-O3
+-else
+ LDFLAGS += -O3
+ KBUILD_LDFLAGS += $(LDFLAGS)
+ endif
+-- 
+2.20.1
+
+
+From c2dcdc2833fe89347c0f0ab0ec56bf4dca6a7475 Mon Sep 17 00:00:00 2001
+From: Nick Desaulniers <ndesaulniers@google.com>
+Date: Tue, 5 Jan 2021 20:47:15 +0530
+Subject: [PATCH 34/35] BACKPORT: arm64: link with -z norelro for LLD or
+ aarch64-elf With GNU binutils 2.35+, linking with BFD produces warnings for
+ vmlinux: aarch64-linux-gnu-ld: warning: -z norelro ignored
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+BFD can produce this warning when the target emulation mode does not
+support RELRO program headers, and -z relro or -z norelro is passed.
+
+Alan Modra clarifies:
+  The default linker emulation for an aarch64-linux ld.bfd is
+  -maarch64linux, the default for an aarch64-elf linker is
+  -maarch64elf.  They are not equivalent.  If you choose -maarch64elf
+  you get an emulation that doesn't support -z relro.
+
+The ARCH=arm64 kernel prefers -maarch64elf, but may fall back to
+-maarch64linux based on the toolchain configuration.
+
+LLD will always create RELRO program header regardless of target
+emulation.
+
+To avoid the above warning when linking with BFD, pass -z norelro only
+when linking with LLD or with -maarch64linux.
+
+Change-Id: Ia2c11f87bb75c2c212e641ac68811cf367939c34
+Fixes: 3b92fa7 ("arm64: link with -z norelro regardless of CONFIG_RELOCATABLE")
+Fixes: 3bbd3db ("arm64: relocatable: fix inconsistencies in linker script and options")
+Cc: <stable@vger.kernel.org> # 5.0.x-
+Reported-by: kernelci.org bot <bot@kernelci.org>
+Reported-by: Quentin Perret <qperret@google.com>
+Signed-off-by: Nick Desaulniers <ndesaulniers@google.com>
+Reviewed-by: Nathan Chancellor <natechancellor@gmail.com>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Cc: Alan Modra <amodra@gmail.com>
+Cc: Fāng-ruì Sòng <maskray@google.com>
+Link: https://lore.kernel.org/r/20201218002432.788499-1-ndesaulniers@google.com
+Signed-off-by: Catalin Marinas <catalin.marinas@arm.com>
+[panchajanya1999: Align with k4.14]
+Signed-off-by: Panchajanya1999 <panchajanya@azure-dev.live>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ Makefile            | 1 +
+ arch/arm64/Makefile | 6 +++---
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 68c5783ac9e0..bcaab55b2056 100644
+--- a/Makefile
++++ b/Makefile
+@@ -834,6 +834,7 @@ KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+ 
+ ifeq ($(ld-name),lld)
+ LDFLAGS += -O3
++LDFLAGS += -z norelro
+ KBUILD_LDFLAGS += $(LDFLAGS)
+ endif
+ 
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index e399278fd073..c635ddfe27d9 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -10,7 +10,7 @@
+ #
+ # Copyright (C) 1995-2001 by Russell King
+ 
+-LDFLAGS_vmlinux	:=--no-undefined -X -z norelro
++LDFLAGS_vmlinux	:=--no-undefined -X
+ CPPFLAGS_vmlinux.lds = -DTEXT_OFFSET=$(TEXT_OFFSET)
+ GZFLAGS		:=-9
+ 
+@@ -130,7 +130,7 @@ LDFLAGS		+= -EB -maarch64_elf64_be_vec
+ else
+ # Prefer the baremetal ELF build target, but not all toolchains include
+ # it so fall back to the standard linux version if needed.
+-LDFLAGS		+=  -EB $(call ld-option, -maarch64elfb, -maarch64linuxb)
++LDFLAGS		+=  -EB $(call ld-option, -maarch64elfb, -maarch64linuxb  -z norelro)
+ endif
+ UTS_MACHINE	:= aarch64_be
+ else
+@@ -141,7 +141,7 @@ ifeq ($(ld-name),gold)
+ LDFLAGS		+= -EL -maarch64_elf64_le_vec
+ else
+ # Same as above, prefer ELF but fall back to linux target if needed.
+-LDFLAGS		+= -EL $(call ld-option, -maarch64elf, -maarch64linux)
++LDFLAGS		+= -EL $(call ld-option, -maarch64elf, -maarch64linux  -z norelro)
+ endif
+ UTS_MACHINE	:= aarch64
+ endif
+-- 
+2.20.1
+
+
+From 46b4b4eba63586cd8edc4f7fee8739ffbbfd2415 Mon Sep 17 00:00:00 2001
+From: "Carlos Jimenez (JavaShin-X)" <javashin1986@gmail.com>
+Date: Sat, 21 Aug 2021 00:21:31 -0400
+Subject: [PATCH 35/35] power/supply: [FIX] maxim: replace udelay with mdelay
+
+__bad_udelay in driver breaks gcc_lto build
+
+Signed-off-by: Carlos Jimenez (JavaShin-X) <javashin1986@gmail.com>
+Signed-off-by: reaPeR1010 <reaPeR10x10x@gmail.com>
+---
+ drivers/power/supply/maxim/onewire_gpio.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/maxim/onewire_gpio.c b/drivers/power/supply/maxim/onewire_gpio.c
+index f6390a001101..2cf5c2f564ea 100644
+--- a/drivers/power/supply/maxim/onewire_gpio.c
++++ b/drivers/power/supply/maxim/onewire_gpio.c
+@@ -77,7 +77,7 @@ static struct onewire_gpio_data *g_onewire_data;
+ 
+ void Delay_us(unsigned int T)
+ {
+-	udelay(T);
++	mdelay(T / 100);
+ }
+ EXPORT_SYMBOL(Delay_us);
+ 
+-- 
+2.20.1
+

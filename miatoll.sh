@@ -46,6 +46,7 @@ FINAL_ZIP=${ZIPNAME}-${VERSION}-${DEVICE}-KERNEL-${TANGGAL}.zip
 if [ "$1" = "--eva" ];
 then
 COMPILER=eva
+GCC_LTO=0
 elif [ "$1" = "--azure" ];
 then
 COMPILER=azure
@@ -117,6 +118,13 @@ function cloneTC() {
 ##------------------------------------------------------##
 # Export Variables
 function exports() {
+        if [ $GCC_LTO = "1" ];
+        then
+        wget https://github.com/reaPeR1010/myscripts/raw/main/gcc_opt.patch && git apply gcc_opt.patch
+        echo "CONFIG_LTO_GCC=y" >> arch/arm64/configs/cust_defconfig
+        echo "CONFIG_GCC_GRAPHITE=y" >> arch/arm64/configs/cust_defconfig
+        fi
+
 	# Export KBUILD_COMPILER_STRING
 	if [ -d ${KERNEL_DIR}/clang ];
 	then
