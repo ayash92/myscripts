@@ -46,7 +46,7 @@ FINAL_ZIP=${ZIPNAME}-${VERSION}-${DEVICE}-KERNEL-${TANGGAL}.zip
 if [ "$1" = "--eva" ];
 then
 COMPILER=eva
-GCC_LTO=0
+GCC_LTO=1
 elif [ "$1" = "--azure" ];
 then
 COMPILER=azure
