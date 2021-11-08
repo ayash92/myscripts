@@ -46,7 +46,7 @@ FINAL_ZIP=${ZIPNAME}-${VERSION}-${DEVICE}-KERNEL-${TANGGAL}.zip
 if [ "$1" = "--eva" ];
 then
 COMPILER=eva
-GCC_LTO=1
+GCC_OPT=1
 elif [ "$1" = "--azure" ];
 then
 COMPILER=azure
@@ -72,10 +72,13 @@ LINKER=ld.gold
 elif [ "$2" = "--bfd" ];
 then
 LINKER=ld.bfd
+elif [ "$2" = "--ld" ];
+then
+LINKER=ld
 fi
 
 ##----------------------------------------------------------##
-# Clone Toolchain
+# Clone ToolChain
 function cloneTC() {
 	
 	if [ $COMPILER = "azure" ];
@@ -83,76 +86,98 @@ function cloneTC() {
 	post_msg " Cloning Azure Clang ToolChain "
 	git clone --depth=1  https://gitlab.com/Panchajanya1999/azure-clang.git clang
 	PATH="${KERNEL_DIR}/clang/bin:$PATH"
-
+	
 	elif [ $COMPILER = "neutron" ];
 	then
 	post_msg " Cloning Neutron Clang ToolChain "
 	git clone --depth=1  https://github.com/Neutron-Clang/neutron-toolchain.git clang
 	PATH="${KERNEL_DIR}/clang/bin:$PATH"
-
+	
 	elif [ $COMPILER = "proton" ];
 	then
 	post_msg " Cloning Proton Clang ToolChain "
 	git clone --depth=1  https://github.com/kdrag0n/proton-clang.git clang
 	PATH="${KERNEL_DIR}/clang/bin:$PATH"
-
-	elif [ $COMPILER = "aosp" ];
-	then
-	post_msg " Cloning Aosp Clang 13.0.3 ToolChain "
-	git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r433403b.git -b 12.0 clang
-	git clone https://github.com/sohamxda7/llvm-stable -b gcc64 --depth=1 gcc
-	git clone https://github.com/sohamxda7/llvm-stable -b gcc32  --depth=1 gcc32
-	PATH="${KERNEL_DIR}/aosp-clang/bin:${KERNEL_DIR}/gcc/bin:${KERNEL_DIR}/gcc32/bin:${PATH}"
-
+	
 	elif [ $COMPILER = "eva" ];
 	then
 	post_msg " Cloning Eva GCC ToolChain "
 	git clone --depth=1 https://github.com/mvaisakh/gcc-arm64.git -b gcc-new gcc64
 	git clone --depth=1 https://github.com/mvaisakh/gcc-arm.git -b gcc-new gcc32
 	PATH=$KERNEL_DIR/gcc64/bin/:$KERNEL_DIR/gcc32/bin/:/usr/bin:$PATH
+	
+	elif [ $COMPILER = "aosp" ];
+	then
+	post_msg " Cloning Aosp Clang 13.0.3 ToolChain "
+        mkdir aosp-clang
+        cd aosp-clang || exit
+	wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r433403b.tar.gz
+        tar -xf clang*
+        cd .. || exit
+	git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git --depth=1 gcc
+	git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git  --depth=1 gcc32
+	PATH="${KERNEL_DIR}/aosp-clang/bin:${KERNEL_DIR}/gcc/bin:${KERNEL_DIR}/gcc32/bin:${PATH}"
 	fi
-	# Clone AnyKernel
-	git clone --depth=1 https://github.com/reaPeR1010/AnyKernel3 -b atoll AnyKernel3
+        # Clone AnyKernel
+        git clone --depth=1 https://github.com/reaPeR1010/AnyKernel3 -b atoll AnyKernel3
+
 	}
 	
 ##------------------------------------------------------##
 # Export Variables
 function exports() {
-        if [ $GCC_LTO = "1" ];
+	
+        # Export Optimization
+        if [ $GCC_OPT = "1" ];
         then
         wget https://github.com/reaPeR1010/myscripts/raw/main/gcc_opt.patch && git apply gcc_opt.patch
         echo "CONFIG_LTO_GCC=y" >> arch/arm64/configs/cust_defconfig
         echo "CONFIG_GCC_GRAPHITE=y" >> arch/arm64/configs/cust_defconfig
         fi
-
-	# Export KBUILD_COMPILER_STRING
-	if [ -d ${KERNEL_DIR}/clang ];
-	then
-	export KBUILD_COMPILER_STRING=$(${KERNEL_DIR}/clang/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')
-	elif [ -d ${KERNEL_DIR}/gcc64 ];
-	then
-	export KBUILD_COMPILER_STRING=$("$KERNEL_DIR/gcc64"/bin/aarch64-elf-gcc --version | head -n 1)
-	fi
-
-	# Export ARCH and SUBARCH
-	export ARCH=arm64
-	export SUBARCH=arm64
-
-	# Export Local Version
-	export LOCALVERSION="-${VERSION}"
-
-	# KBUILD HOST and USER
-	export KBUILD_BUILD_HOST=ArchLinux
-	export KBUILD_BUILD_USER="RoHaN"
-
-	# DroneCI
+        # Export KBUILD_COMPILER_STRING
+        if [ -d ${KERNEL_DIR}/clang ];
+           then
+               export KBUILD_COMPILER_STRING=$(${KERNEL_DIR}/clang/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')
+        elif [ -d ${KERNEL_DIR}/gcc64 ];
+           then
+               export KBUILD_COMPILER_STRING=$("$KERNEL_DIR/gcc64"/bin/aarch64-elf-gcc --version | head -n 1)
+        elif [ -d ${KERNEL_DIR}/aosp-clang ];
+            then
+               export KBUILD_COMPILER_STRING=$(${KERNEL_DIR}/aosp-clang/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')
+        fi
+        
+        # Export ARCH and SUBARCH
+        export ARCH=arm64
+        export SUBARCH=arm64
+        
+        # Export Local Version
+        export LOCALVERSION="-${VERSION}"
+        
+        # KBUILD HOST and USER
+        export KBUILD_BUILD_HOST=ArchLinux
+        export KBUILD_BUILD_USER="RoHaN"
+        
+        # CI
+        if [ "$CI" ]
+           then
+               
+           if [ "$CIRCLECI" ]
+              then
+                  export KBUILD_BUILD_VERSION=${CIRCLE_BUILD_NUM}
+                  export CI_BRANCH=${CIRCLE_BRANCH}
+           elif [ "$DRONE" ]
+	      then
+		  export KBUILD_BUILD_VERSION=${DRONE_BUILD_NUMBER}
+		  export CI_BRANCH=${DRONE_BRANCH}
+           fi
+		   
+        fi
 	export PROCS=$(nproc --all)
-	export CI_BRANCH=$DRONE_BRANCH
-	export KBUILD_BUILD_VERSION=$DRONE_BUILD_NUMBER
 	export DISTRO=$(source /etc/os-release && echo "${NAME}")
 	}
-
+        
 ##----------------------------------------------------------------##
+# Telegram Bot Integration
 
 function post_msg() {
 	curl -s -X POST "https://api.telegram.org/bot$token/sendMessage" \
@@ -161,7 +186,6 @@ function post_msg() {
 	-d "parse_mode=html" \
 	-d text="$1"
 	}
-##----------------------------------------------------------------##
 
 function push() {
 	curl -F document=@$1 "https://api.telegram.org/bot$token/sendDocument" \
@@ -179,45 +203,68 @@ function compile() {
 	# Compile
 	make O=out ARCH=arm64 ${DEFCONFIG}
 	if [ -d ${KERNEL_DIR}/clang ];
-	then
-	make -kj$(nproc --all) O=out \
-	ARCH=arm64 \
-	CC=clang \
-	CROSS_COMPILE=aarch64-linux-gnu- \
-	CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-	LD=${LINKER} \
-	AR=llvm-ar \
-	NM=llvm-nm \
-	OBJCOPY=llvm-objcopy \
-	OBJDUMP=llvm-objdump \
-	STRIP=llvm-strip \
-	READELF=llvm-readelf \
-	OBJSIZE=llvm-size \
-	V=$VERBOSE 2>&1 | tee error.log
+	   then
+	       make -kj$(nproc --all) O=out \
+	       ARCH=arm64 \
+	       CC=clang \
+	       HOSTCC=clang \
+	       HOSTCXX=clang++ \
+	       CROSS_COMPILE=aarch64-linux-gnu- \
+	       CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+	       LD=${LINKER} \
+	       AR=llvm-ar \
+	       NM=llvm-nm \
+	       OBJCOPY=llvm-objcopy \
+	       OBJDUMP=llvm-objdump \
+	       STRIP=llvm-strip \
+	       READELF=llvm-readelf \
+	       OBJSIZE=llvm-size \
+	       V=$VERBOSE 2>&1 | tee error.log
 	elif [ -d ${KERNEL_DIR}/gcc64 ];
-	then
-	make -kj$(nproc --all) O=out \
-	ARCH=arm64 \
-	CROSS_COMPILE_ARM32=arm-eabi- \
-	CROSS_COMPILE=aarch64-elf- \
-	LD=aarch64-elf-${LINKER} \
-	AR=llvm-ar \
-	NM=llvm-nm \
-	OBJCOPY=llvm-objcopy \
-	OBJDUMP=llvm-objdump \
-	STRIP=llvm-strip \
-	OBJSIZE=llvm-size \
-	V=$VERBOSE 2>&1 | tee error.log
+	   then
+	       make -kj$(nproc --all) O=out \
+	       ARCH=arm64 \
+	       CROSS_COMPILE_ARM32=arm-eabi- \
+	       CROSS_COMPILE=aarch64-elf- \
+	       LD=aarch64-elf-${LINKER} \
+	       AR=llvm-ar \
+	       NM=llvm-nm \
+	       OBJCOPY=llvm-objcopy \
+	       OBJDUMP=llvm-objdump \
+	       STRIP=llvm-strip \
+	       OBJSIZE=llvm-size \
+	       V=$VERBOSE 2>&1 | tee error.log
+        elif [ -d ${KERNEL_DIR}/aosp-clang ];
+           then
+               make -kj$(nproc --all) O=out \
+	       ARCH=arm64 \
+	       CC=clang \
+               HOSTCC=clang \
+	       HOSTCXX=clang++ \
+	       CLANG_TRIPLE=aarch64-linux-gnu- \
+	       CROSS_COMPILE=aarch64-linux-android- \
+	       CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+	       LD=${LINKER} \
+	       AR=llvm-ar \
+	       NM=llvm-nm \
+	       OBJCOPY=llvm-objcopy \
+	       OBJDUMP=llvm-objdump \
+               STRIP=llvm-strip \
+	       READELF=llvm-readelf \
+	       OBJSIZE=llvm-size \
+	       V=$VERBOSE 2>&1 | tee error.log
 	fi
+	
 	# Verify Files
 	if ! [ -a "$IMAGE" ];
-	then
-	push "error.log" "Build Throws Errors"
-	exit 1
-	else
-	post_msg " Kernel Compilation Finished. Started Zipping "
+	   then
+	       push "error.log" "Build Throws Errors"
+	       exit 1
+	   else
+	       post_msg " Kernel Compilation Finished. Started Zipping "
 	fi
 	}
+
 ##----------------------------------------------------------------##
 function zipping() {
 	# Copy Files To AnyKernel3 Zip
@@ -226,11 +273,12 @@ function zipping() {
 	
 	# Zipping and Push Kernel
 	cd AnyKernel3 || exit 1
-    zip -r9 ${FINAL_ZIP} *
-    MD5CHECK=$(md5sum "$FINAL_ZIP" | cut -d' ' -f1)
-    push "$FINAL_ZIP" "Build took : $(($DIFF / 60)) minute(s) and $(($DIFF % 60)) second(s) | For <b>$MODEL ($DEVICE)</b> | <b>${KBUILD_COMPILER_STRING}</b> | <b>MD5 Checksum : </b><code>$MD5CHECK</code>"
-    cd ..
-    }
+        zip -r9 ${FINAL_ZIP} *
+        MD5CHECK=$(md5sum "$FINAL_ZIP" | cut -d' ' -f1)
+        push "$FINAL_ZIP" "Build took : $(($DIFF / 60)) minute(s) and $(($DIFF % 60)) second(s) | For <b>$MODEL ($DEVICE)</b> | <b>${KBUILD_COMPILER_STRING}</b> | <b>MD5 Checksum : </b><code>$MD5CHECK</code>"
+        cd ..
+        }
+    
 ##----------------------------------------------------------##
 
 cloneTC
