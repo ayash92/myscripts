@@ -20,8 +20,9 @@ VERSION=X2-EFFICIENT
 DEFCONFIG=cust_defconfig
 
 # Files
-IMAGE=$(pwd)/out/arch/arm64/boot/Image.gz-dtb
+IMAGE=$(pwd)/out/arch/arm64/boot/Image.gz
 DTBO=$(pwd)/out/arch/arm64/boot/dtbo.img
+DTB=$(pwd)/out/arch/arm64/boot/dts/qcom/cust-atoll-ab.dtb
 
 # Verbose Build
 VERBOSE=0
@@ -270,6 +271,7 @@ function zipping() {
 	# Copy Files To AnyKernel3 Zip
 	cp $IMAGE AnyKernel3
 	cp $DTBO AnyKernel3
+        cp $DTB AnyKernel3/dtb
 	
 	# Zipping and Push Kernel
 	cd AnyKernel3 || exit 1
