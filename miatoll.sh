@@ -315,8 +315,13 @@ function savecache() {
 7za a -tzip -mmt ccache.zip /tmp/ccache/*
 git config --global user.name $GH_USERNAME
 git config --global user.email $GH_EMAIL
-git clone "https://$GH_USERNAME:$GH_TOKEN@$GH_PUSH_REPO_URL -b ${CCACHE_BRANCH}" repo
-mv ccache.zip repo
+git clone "https://$GH_USERNAME:$GH_TOKEN@$GH_PUSH_REPO_URL -b ${CCACHE_BRANCH}" rel_repo
+pushd rel_repo || exit
+mv ccache.zip rel_repo
+git add .
+git commit -sm "CCACHE: IMPORT CCACHE FROM NEW BUILD"
+git push -f
+popd || exit
 }
 
 ##----------------------------------------------------------##
@@ -327,5 +332,5 @@ compile
 END=$(date +"%s")
 DIFF=$(($END - $START))
 zipping
-
+savecache
 ##----------------*****-----------------------------##
