@@ -23,6 +23,9 @@ DEFCONFIG=cust_defconfig
 DISABLE_LTO=0
 THIN_LTO=1
 
+# ccache
+CCACHE=1
+
 # Files
 IMAGE=$(pwd)/out/arch/arm64/boot/Image.gz
 DTBO=$(pwd)/out/arch/arm64/boot/dtbo.img
@@ -130,7 +133,16 @@ function cloneTC() {
 ##------------------------------------------------------##
 # Export Variables
 function exports() {
-	
+        # ccachs
+        if [ ${CCACHE} = "1" ];
+           then
+               mkdir -p /tmp/ccache
+               curl ${CCACHE_LINK} -o ccache.zip && unzip ccache.zip -d /tmp/ccache/ 
+               export CCACHE_DIR=/tmp/ccache
+               export CCACHE_EXEC=$(which ccache)
+	       export USE_CCACHE=1
+               ccache -M 25G
+        fi
         # Export KBUILD_COMPILER_STRING
         if [ -d ${KERNEL_DIR}/clang ];
            then
@@ -296,9 +308,18 @@ function zipping() {
         push "$FINAL_ZIP" "Build took : $(($DIFF / 60)) minute(s) and $(($DIFF % 60)) second(s) | For <b>$MODEL ($DEVICE)</b> | <b>${KBUILD_COMPILER_STRING}</b> | <b>MD5 Checksum : </b><code>$MD5CHECK</code>"
         cd ..
         }
-    
-##----------------------------------------------------------##
 
+##----------------------------------------------------------##
+# Backup and save ccache
+function savecache() {
+7za a -tzip -mmt ccache.zip /tmp/ccache/*
+git config --global user.name $GH_USERNAME
+git config --global user.email $GH_EMAIL
+git clone "https://$GH_USERNAME:$GH_TOKEN@$GH_PUSH_REPO_URL -b ${CCACHE_BRANCH}" repo
+mv ccache.zip repo
+}
+
+##----------------------------------------------------------##
 cloneTC
 exports
 configs
