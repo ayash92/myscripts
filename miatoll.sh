@@ -19,6 +19,10 @@ VERSION=X3-BETA
 # Kernel Defconfig
 DEFCONFIG=cust_defconfig
 
+# Select LTO variant ( Full LTO by default )
+DISABLE_LTO=0
+THIN_LTO=1
+
 # Files
 IMAGE=$(pwd)/out/arch/arm64/boot/Image.gz
 DTBO=$(pwd)/out/arch/arm64/boot/dtbo.img
@@ -127,13 +131,6 @@ function cloneTC() {
 # Export Variables
 function exports() {
 	
-        # Export Optimization
-        if [ $GCC_OPT = "1" ];
-        then
-        wget https://github.com/reaPeR1010/myscripts/raw/main/gcc_opt.patch && git apply gcc_opt.patch
-        echo "CONFIG_LTO_GCC=y" >> arch/arm64/configs/cust_defconfig
-        echo "CONFIG_GCC_GRAPHITE=y" >> arch/arm64/configs/cust_defconfig
-        fi
         # Export KBUILD_COMPILER_STRING
         if [ -d ${KERNEL_DIR}/clang ];
            then
@@ -195,6 +192,25 @@ function push() {
 	-F caption="$2"
 	}
 ##----------------------------------------------------------------##
+# Export Configs
+function configs() {
+    if [ -d ${KERNEL_DIR}/clang ] || [ -d ${KERNEL_DIR}/aosp-clang  ]; then
+       if [ $DISABLE_LTO = "1" ]; then
+          sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/' arch/arm64/configs/cust_defconfig
+          sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/' arch/arm64/configs/cust_defconfig
+          sed -i 's/# CONFIG_LTO_NONE is not set/CONFIG_LTO_NONE=y/' arch/arm64/configs/cust_defconfig
+       elif [ $THIN_LTO = "1" ]; then
+          sed -i 's/# CONFIG_THINLTO is not set/CONFIG_THINLTO=y/' arch/arm64/configs/cust_defconfig
+       fi
+    elif [ -d ${KERNEL_DIR}/gcc64 ]; then
+       sed -i 's/CONFIG_LLVM_POLLY=y/# CONFIG_LLVM_POLLY is not set/' arch/arm64/configs/cust_defconfig
+       sed -i 's/# CONFIG_GCC_GRAPHITE is not set/CONFIG_GCC_GRAPHITE=y/' arch/arm64/configs/cust_defconfig
+       if ! [ $DISABLE_LTO = "1" ]; then
+          sed -i 's/# CONFIG_LTO_GCC is not set/CONFIG_LTO_GCC=y/' arch/arm64/configs/cust_defconfig
+       fi
+    fi
+}
+##----------------------------------------------------------##
 # Compilation
 function compile() {
 START=$(date +"%s")
@@ -202,7 +218,7 @@ START=$(date +"%s")
 	post_msg "<b>$KBUILD_BUILD_VERSION CI Build Triggered</b>%0A<b>Docker OS: </b><code>$DISTRO</code>%0A<b>Kernel Version : </b><code>$KERVER</code>%0A<b>Date : </b><code>$(TZ=Asia/Kolkata date)</code>%0A<b>Device : </b><code>$MODEL [$DEVICE]</code>%0A<b>Pipeline Host : </b><code>$KBUILD_BUILD_HOST</code>%0A<b>Host Core Count : </b><code>$PROCS</code>%0A<b>Compiler Used : </b><code>$KBUILD_COMPILER_STRING</code>%0A<b>Linker : </b><code>$LINKER</code>%0a<b>Branch : </b><code>$CI_BRANCH</code>%0A<b>Top Commit : </b><a href='$DRONE_COMMIT_LINK'>$COMMIT_HEAD</a>"
 	
 	# Compile
-	make O=out ARCH=arm64 ${DEFCONFIG}
+	make O=out ${DEFCONFIG}
 	if [ -d ${KERNEL_DIR}/clang ];
 	   then
 	       make -kj$(nproc --all) O=out \
@@ -285,6 +301,7 @@ function zipping() {
 
 cloneTC
 exports
+configs
 compile
 END=$(date +"%s")
 DIFF=$(($END - $START))
