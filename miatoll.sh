@@ -21,7 +21,7 @@ DEFCONFIG=cust_defconfig
 
 # Select LTO variant ( Full LTO by default )
 DISABLE_LTO=0
-THIN_LTO=0
+THIN_LTO=1
 
 # Files
 IMAGE=$(pwd)/out/arch/arm64/boot/Image.gz
@@ -41,7 +41,7 @@ DATE=$(TZ=Asia/Kolkata date +"%Y%m%d-%T")
 TANGGAL=$(date +"%F%S")
 
 # Specify Final Zip Name
-ZIPNAME=NEXUS
+ZIPNAME=aRise
 FINAL_ZIP=${ZIPNAME}-${VERSION}-${DEVICE}-KERNEL-${TANGGAL}.zip
 
 ##----------------------------------------------------------##
