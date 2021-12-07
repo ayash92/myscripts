@@ -14,7 +14,7 @@ MODEL=Xiaomi
 DEVICE=Miatoll
 
 # Kernel Version Code
-VERSION=X3-BETA
+VERSION=BloodLust
 
 # Kernel Defconfig
 DEFCONFIG=cust_defconfig
