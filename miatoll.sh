@@ -14,7 +14,7 @@ MODEL=Xiaomi
 DEVICE=Miatoll
 
 # Kernel Version Code
-VERSION=BloodLust
+VERSION=X3
 
 # Kernel Defconfig
 DEFCONFIG=cust_defconfig
@@ -41,7 +41,7 @@ DATE=$(TZ=Asia/Kolkata date +"%Y%m%d-%T")
 TANGGAL=$(date +"%F%S")
 
 # Specify Final Zip Name
-ZIPNAME=aRise
+ZIPNAME=Nexus
 FINAL_ZIP=${ZIPNAME}-${VERSION}-${DEVICE}-KERNEL-${TANGGAL}.zip
 
 ##----------------------------------------------------------##
@@ -123,7 +123,7 @@ function cloneTC() {
 	PATH="${KERNEL_DIR}/aosp-clang/bin:${KERNEL_DIR}/gcc/bin:${KERNEL_DIR}/gcc32/bin:${PATH}"
 	fi
         # Clone AnyKernel
-        git clone --depth=1 https://github.com/reaPeR1010/AnyKernel3
+        git clone --depth=1 https://github.com/ayash92/AnyKernel3
 
 	}
 	
@@ -152,7 +152,7 @@ function exports() {
         
         # KBUILD HOST and USER
         export KBUILD_BUILD_HOST=ArchLinux
-        export KBUILD_BUILD_USER="RoHaN"
+        export KBUILD_BUILD_USER="Yash"
         
         # CI
         if [ "$CI" ]
