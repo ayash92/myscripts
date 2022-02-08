@@ -60,6 +60,9 @@ COMPILER=proton
 elif [ "$1" = "--aosp" ];
 then
 COMPILER=aosp
+elif [ "$1" = "--atomx" ];
+then
+COMPILER=atomx
 elif [ "$1" = "--neutron" ];
 then
 COMPILER=neutron
@@ -90,7 +93,14 @@ function cloneTC() {
 	post_msg " Cloning Azure Clang ToolChain "
 	git clone --depth=1  https://gitlab.com/ImSpiDy/azure-clang.git clang
 	PATH="${KERNEL_DIR}/clang/bin:$PATH"
+
+        elif [ $COMPILER = "atomx" ];
+        then
+        post_msg " Cloning Atomx Clang ToolChain "
+        git clone --depth=1  https://gitlab.com/ElectroPerf/atom-x-clang.git clang
+        PATH="${KERNEL_DIR}/clang/bin:$PATH"
 	
+
 	elif [ $COMPILER = "neutron" ];
 	then
 	post_msg " Cloning Neutron Clang ToolChain "
