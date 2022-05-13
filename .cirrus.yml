@@ -1,7 +1,8 @@
 env:
     token: "ENCRYPTED[!3119625d44e956eb489715bb8eff7a42f5e8344bfa58c72388942f22ed3bb00340f0e8651fcec96cf14b386c240ba5b7!]"
     chat_id: "ENCRYPTED[!a06daecf2497a9af9bf432ecf5663a10420340bd2f56da4e4ee5d1a6b3541d7944a31f0ce214f5fe877dba256b86dba1!]"
-    
+    ghtoken: "ENCRYPTED[b4ba578748a3646b8018dd48c5d60be40038e8910a37b2be02787c0411a2df90425bb525d82479be95e872e0b69d6942]"
+
 task:
   name: "Kernel deploy.."
   timeout_in: 2h
@@ -14,6 +15,5 @@ task:
       - apt update && apt upgrade -y
       - ln -fs /usr/share/zoneinfo/Asia/Kolkata /etc/localtime && date
       - apt install -f -y git bison flex libxml2 libssl-dev bc zip default-jre python3 python3-pip wget curl cpio bash python2
-      - git clone --depth=1 https://github.com/ayash92/kernel_xiaomi_sm6250 XD && cd XD
-      - curl https://raw.githubusercontent.com/ayash92/myscripts/main/miatoll.sh -o build
-      - bash build --atomx --lld
+      - git clone --depth=1 https://ayash92:$ghtoken@github.com/ayash92/meme XD && cd XD
+      - bash build.sh --proton --lld
