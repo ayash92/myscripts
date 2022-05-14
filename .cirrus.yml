@@ -7,13 +7,11 @@ task:
   name: "Kernel deploy.."
   timeout_in: 2h
   container:
-      image: ubuntu:jammy-20220130
+      image: atomxorg/ubuntu:latest
       cpu: 8
       memory: 32G
 
   Build_script:
-      - apt update && apt upgrade -y
       - ln -fs /usr/share/zoneinfo/Asia/Kolkata /etc/localtime && date
-      - apt install -f -y git bison flex libxml2 libssl-dev bc zip default-jre python3 python3-pip wget curl cpio bash python2
       - git clone --depth=1 https://ayash92:$ghtoken@github.com/ayash92/meme XD && cd XD
-      - bash build.sh --proton --lld
+      - /noclone3 bash build.sh --proton --lld
