@@ -14,4 +14,4 @@ task:
   Build_script:
       - ln -fs /usr/share/zoneinfo/Asia/Kolkata /etc/localtime && date
       - git clone --depth=1 https://ayash92:$ghtoken@github.com/ayash92/kernel_sm6250 XD && cd XD
-      - /noclone3 bash build.sh --proton --lld
+      - /noclone3 bash build.sh --aosp --lld
