@@ -1,7 +1,7 @@
 env:
     token: "ENCRYPTED[!3119625d44e956eb489715bb8eff7a42f5e8344bfa58c72388942f22ed3bb00340f0e8651fcec96cf14b386c240ba5b7!]"
     chat_id: "ENCRYPTED[!a06daecf2497a9af9bf432ecf5663a10420340bd2f56da4e4ee5d1a6b3541d7944a31f0ce214f5fe877dba256b86dba1!]"
-    ghtoken: "ENCRYPTED[b4ba578748a3646b8018dd48c5d60be40038e8910a37b2be02787c0411a2df90425bb525d82479be95e872e0b69d6942]"
+    ghtoken: "ENCRYPTED[!c968eb5f9c5e807889d5e1350db8aa63ddef3a4d6ea80feba1ac5e9bd5cd02fc1fb5eaeb223534986ad468e9fda4ee6f!]"
 
 task:
   name: "Kernel deploy.."
